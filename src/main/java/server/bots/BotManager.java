@@ -1,0 +1,7801 @@
+package server.bots;
+
+import client.BotClient;
+import config.YamlConfig;
+import client.Character;
+import client.Client;
+import client.Disease;
+import client.Job;
+import client.QuestStatus;
+import client.inventory.InventoryType;
+import client.inventory.Item;
+import client.inventory.WeaponType;
+import client.inventory.manipulator.InventoryManipulator;
+import client.keybind.KeyBinding;
+import constants.game.CharacterStance;
+import constants.id.MapId;
+import constants.inventory.ItemConstants;
+import constants.string.CharsetConstants;
+import net.server.Server;
+import net.server.world.Party;
+import net.server.world.PartyCharacter;
+import net.server.world.PartyOperation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import server.ItemInformationProvider;
+import server.StatEffect;
+import server.TimerManager;
+import server.bots.combat.BotMobHitboxProvider;
+import server.bots.pq.BotPqHooks;
+import server.life.Monster;
+import server.life.MobSkill;
+import server.maps.Foothold;
+import server.maps.MapItem;
+import server.maps.MapleMap;
+import server.maps.Rope;
+import server.quest.Quest;
+import tools.PacketCreator;
+import tools.Pair;
+
+import java.awt.*;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class BotManager {
+    private static final Logger log = LoggerFactory.getLogger(BotManager.class);
+    private static final BotManager instance = new BotManager();
+
+    /**
+     * All tunable constants in one place. Fields are non-final so the class can
+     * be hotswapped in debug mode without the JVM inlining the values.
+     */
+    public static class Config {
+        public int   AI_TICK_MS       = 100;   // ms between heavier bot decision passes
+
+        // Passive loot
+        public int   LOOT_RADIUS         = 100;   // px; pickup items within this box radius
+        public int   INV_FULL_WARN_CD_MS = 5 * 60_000;
+        // Legacy convenience from the supervised-bots era: NX cards a bot loots get picked up
+        // by the owner instead. Off by default - independent bots keep their own loot.
+        public boolean REDIRECT_NX_CARDS_TO_OWNER = false;
+
+        // Potion management
+        public int   POT_LOW_WARN          = 100;   // warn on grind start below this count
+        public int   POT_STOP              = 10;    // stop grinding below this HP pot count
+        public int   POT_CHECK_INTERVAL_MS = 45_000;
+        public int   POT_CHECK_RETRY_SOON_MS = 250;
+        public int   MP_RECOVERY_INTERVAL_MS = 10_000;
+        public int   BASE_HP_RECOVERY = 10;
+        public int   BASE_MP_RECOVERY = 3;
+        // Improved MP Recovery (Magician passive 2000000) has no WZ x value — the v83 client computes
+        // it internally as MP-per-character-level rising with skill level. Modeled as
+        //   bonus = charLevel * skillLevel / IMPROVED_MP_RECOVERY_DIVISOR
+        // Calibrated to a captured HEAL_OVER_TIME packet (lv65 mage, Improved MP Recovery 16 -> 107
+        // MP/10s = BASE_MP_RECOVERY 3 + 104): 65*16/10 = 104. Matches the packet exactly and keeps the
+        // community-reported "MP per character level scales with skill" shape (their flat 2/level at
+        // max slightly overshoots what the client actually sends).
+        public int   IMPROVED_MP_RECOVERY_DIVISOR = 10;
+        public float AUTOPOT_HP_THRESH = 0.7f; // use HP pot when HP falls below this ratio
+
+        // Low-HP rest (no-pot survival, pairs with the strict pot spend tier): a broke bot that is out
+        // of HP pots parks on a safe spot and passive-regens instead of grinding itself to death.
+        // Hysteresis: start resting below ENTER, resume grinding once regen passes EXIT.
+        public float HP_REST_ENTER = 0.5f;
+        public float HP_REST_EXIT  = 0.85f;
+
+        // Touch-danger map penalty: a broke bot (can't pot through chip damage) discounts a grind map's
+        // score by 1/(1 + expectedHpLossPerHit * mesoScaler), where mesoScaler ramps with how broke it is
+        // (rich bots barely care; flat-broke bots heavily avoid hard-hitting maps). expectedHpLossPerHit is
+        // the real-combat SSOT (avoid + defense), see BotDefenseDataProvider.expectedTouchHpLossFraction.
+        public double DANGER_MESO_SCALER_MAX = 10.0;     // at 0 meso
+        public double DANGER_MESO_SCALER_MIN = 0.1;      // at/above the cap
+        public int    DANGER_MESO_CAP        = 100_000;  // meso at which danger barely matters
+        public float AUTOPOT_MP_THRESH = 0.5f; // use MP pot when MP falls below this ratio
+        // Don't start a BUY-pots town errand below this much meso: a broke bot (e.g. a fresh lv1
+        // ownerless spawn) would otherwise walk all the way to a shop, buy nothing on NOT_ENOUGH_MESO,
+        // walk back, and repeat. The SELL-trash errand is NOT gated by this - selling earns the meso.
+        public int RESUPPLY_MIN_MESO = 5000;
+
+        // Tiered self-economy spend policy (SSOT in BotShopManager). A poor bot prioritizes being able
+        // to FIGHT (ammo) over SURVIVE (pots) over saving TIME (taxi), so meso is reserved in that order:
+        //   < AMMO_RESERVE_MESO : protect-mode, spend only on ammo (a star recharge/set is cheap, <=10k)
+        //   < POT_SPEND_MIN_MESO: no pot buying (survive via passive regen + the existing low-HP retreat)
+        //   < TAXI_MIN_MESO     : no paid taxi shortcuts (walk instead; continent boat/dolphin rides,
+        //                         which have no walking alternative, are always allowed)
+        public int AMMO_RESERVE_MESO  = 10_000;
+        public int POT_SPEND_MIN_MESO = 20_000;
+        public int TAXI_MIN_MESO      = 50_000;
+        // Below this a truly-broke ranged bot can't even buy the cheapest ammo set (~500 meso), so a
+        // resupply town trip would accomplish nothing. With no sellable trash either, it stops bouncing
+        // to town and farms in place with the degenerate close-range swing (claw punch / point-blank
+        // shot, no ammo) until meso/loot accrues enough to restock. Last-resort guardrail.
+        public int AMMO_BUY_FLOOR_MESO = 1_000;
+
+        // Follow stagger: each bot is offset this many px from the owner (index-based, alternating left/right)
+        public int FOLLOW_STAGGER = 60;
+
+        // Shared bucket route cache (BotNavigationManager.findNextEdge). The cache key
+        // includes start/target position buckets so bots in the same region pair but on different platform
+        // sides do not reuse each other's first hop (the old position-blind key caused ping-pong; see
+        // docs/bot/nav-bucket-cache-regression-report-2026-06-25.md). Live-toggle from /admin.
+        public boolean ROUTE_CACHE_ENABLED = true;
+
+        // Quest piggyback (BotQuestManager). AUTO_QUESTS: run autoStart+autoComplete quests on the
+        // tick (no travel). QUEST_PIGGYBACK: while autopiloting, detour to start/turn-in mob quests
+        // whose kills overlap the current grind. Kill switches - both default on.
+        public boolean AUTO_QUESTS = true;
+        public boolean QUEST_PIGGYBACK = true;
+        // Temple-of-Time questline driver (BotTempleProgressionManager): a high-level autopilot bot
+        // (past its personal ambition level) works the 3500->3521 corridor on its own. Kill switch.
+        public boolean TEMPLE_PROGRESSION = true;
+        // Zakum-prequest driver (BotZakumPrequestManager): an autopilot bot (past its personal
+        // ambition level) earns its own Eyes of Fire (approval + trials). Kill switch.
+        public boolean ZAKUM_PREQUEST = true;
+        // Tell the owner in chat when a quest is skipped as bugged (internal-state debug chatter).
+        // Off by default — it leaks "X seems bugged" noise to players.
+        public boolean QUEST_BUGGED_CHAT = false;
+
+        // Job advancement fallback: when an autopilot bot can't reach its job instructor (3rd/4th-job
+        // NPCs live in deep dungeon / Leafre maps that may be unroutable), force the advance on the
+        // spot anyway. Off = log an error WITH reachability instead and leave the job unchanged, so
+        // failures are debuggable rather than silently papered over. See BotStarterKitManager.
+        public boolean JOB_CHANGE_FALLBACK_ANYWHERE = false;
+
+        // Owner inactivity (offline or dead) before bot scrolls/warps to nearest town and idles.
+        public long OWNER_INACTIVE_TOWN_RETURN_MS = 5L * 60_000L;
+        // Hard stop for explicitly-ordered autopilot bots playing on while the owner is
+        // offline/dead: after this they take the normal town safe mode. Test value: 1 hour.
+        public long AUTOPILOT_OWNER_OFFLINE_LIMIT_MS = 60L * 60_000L;
+
+        // Grind recovery is looser than follow recovery so bots can work nearby platforms,
+        // but still get pulled back to a same-map party anchor if they fall far out of bounds.
+        public int GRIND_PARTY_TELEPORT_DIST_MULTIPLIER = 2;
+
+        // Rest-spot safety (resolveSafeIdleRegion): ledges bearing a static mob SPAWN are
+        // categorically hot (mobs patrol their whole foothold, even the far tip), and clearance is
+        // axis-aware — height above a spawn is worth more than horizontal gap (mobs don't climb).
+        // Off = live-mob danger ranking only (previous behavior).
+        public boolean REST_SPOT_SAFETY_ENABLED = true;
+        // Mid-combat rope stall recovery: clinging to a rope with no vertical progress while a mob
+        // waits nearby -> dismount toward it instead of hanging forever. Off = nav-only recovery.
+        public boolean CLIMB_COMBAT_RECOVERY_ENABLED = true;
+        public long CLIMB_STALL_MS = 1_200L;
+        public int CLIMB_STALL_PROGRESS_EPS = 6;
+        // Grind-advisor level band: pre-filter candidate mobs to [level-DOWN, level+UP] before the
+        // emergent exp/survivability scoring (constant look-down span, so lowbies floor at mob lv 1
+        // while a lv 80 floors at 55). Never strands: an empty banded pool falls back to the full
+        // pool. Off = fully emergent selection (previous behavior).
+        public boolean GRIND_LEVEL_BAND_ENABLED = true;
+        public int GRIND_LEVEL_BAND_UP = 12;
+        public int GRIND_LEVEL_BAND_DOWN = 25;
+        // Grind loot sweep: instead of walking to the NEAREST eligible drop, walk to the FAR end of
+        // the same-ledge drop chain on that side, so the passive loot vacuum grabs the whole chain
+        // in one continuous motion. Off = nearest-drop walking (previous behavior).
+        public boolean LOOT_SWEEP_CHAIN_ENABLED = true;
+
+        // Party-autopilot cohesion (BotAutopilotManager): the leader holds and waits for
+        // stragglers instead of racing ahead. Hops>this many portals behind triggers a wait
+        // (1 = wait once someone is 2+ maps back; tolerates one map of in-transit spread).
+        // On the SAME map a member farther than SAME_MAP_STRAGGLER_PX also counts; the wait
+        // releases only once they close to within SAME_MAP_STRAGGLER_RESUME_PX (hysteresis,
+        // so the leader doesn't stop-start flap at the boundary).
+        public int STRAGGLER_WAIT_HOPS = 1;
+        public int SAME_MAP_STRAGGLER_PX = 700;
+        public int SAME_MAP_STRAGGLER_RESUME_PX = 350;
+
+        // Party level-gap idle-leech (BotAutopilotManager.updateIdleLeech). The server stops sharing
+        // a kill's exp with a member more than EXP_SPLIT_LEECH_INTERVAL (5) levels below the
+        // damage-dealer (Monster.distributePartyExperience). To stop the gap running away, a cohort
+        // member that has pulled this many levels above the lowest member stops dealing damage and
+        // idles on a safe spot, so the lower bots become the damage-dealers and get full exp.
+        // Hysteresis: enter at TRIGGER, resume only once the gap closes to <= RELEASE.
+        public int PARTY_LEECH_GAP_TRIGGER = 4;  // just under the 5-level exp cutoff
+        public int PARTY_LEECH_GAP_RELEASE = 2;
+        public boolean PARTY_LEECH_ENABLED = true;
+
+        // Living-server population scheduler (BotScheduler). DEFAULT OFF — it auto logs managed bots
+        // in/out (and, when enabled, auto-generates fresh ones) to track a target online-count curve,
+        // so a server start never silently spawns a crowd. Enable via @botpop or by flipping this.
+        public boolean POPULATION_SCHED_ENABLED = true;
+        public long POPULATION_SWEEP_MS = 60_000L;         // reconcile cadence
+        public int POPULATION_WORLD = 0;                   // world/channel scheduled bots spawn into
+        public int POPULATION_CHANNEL = 1;
+        // Target ONLINE managed-bot count by server-local hour (0-23): quiet overnight, busy evening.
+        public int[] POPULATION_CURVE = {
+                10, 11, 12, 13, 14, 15, 14, 15, 15, 16, 17, 18,        // 00-11
+                19, 20, 21, 21, 20, 18, 16, 15, 13, 10, 10, 10 // 12-23
+        };
+        public int POPULATION_NOISE = 2;                   // +/- jitter on the hourly target
+        public double POPULATION_MULTIPLIER = 10.0;        // scales the whole online target up/down, so bot
+                                                           // count is adjustable without editing the curve/noise
+
+        // Unobserved-map LOD (docs/bot/living-server-design.md): when no real player can observe a bot,
+        // simplify its simulation. Each subsystem's simplification is an independent boolean so any one
+        // can be bisected/disabled live (all default true; all false => bit-for-bit today's behavior).
+        //
+        // They are NOT orthogonal. cadenceForLod requires CADENCE && PHYSICS && abstractGrindEligible
+        // (which requires GRIND), so clearing GRIND *or* PHYSICS also drops the bot back to the 50ms tick.
+        // That gate is deliberate: a bot must never receive coarse ticks while it still runs real combat
+        // or real physics, both of which assume a 50ms step.
+        //
+        // CPU, measured on a 6-core box (tools/lod_grind_audit.py --perf-sweep). At ~560 unobserved bots
+        // the shipped config cost ~0.33 process cores while all-off exceeded 4.7 and starved the tick
+        // pool. At ~200 bots (2026-07-10): shipped ~0.11 cores, all-off ~0.83; per-option cost of turning
+        // ONE simplification off: GRIND +0.73 (real combat is the dominant cost), PHYSICS +0.26,
+        // TRAVEL +0.07, CADENCE ~+0.01 process cores. Even at low CPU the shared timer pool delivers
+        // 50ms ticks late once many bots want them (ticks/bot falls well under 1000/tickMs), so full
+        // fidelity degrades before the CPU meter says so. That is the load LOD exists to buy down; it is
+        // also why a ground-truth kill rate is measured by pinning a few maps via /api/lod rather than by
+        // clearing these flags globally (a starved pool depresses the very rate you are trying to measure).
+        //
+        // PHYSICS: BotMovementManager's nav resolve + physics integration become a wall-clock lerp between
+        //   two points (a "motion plan"), but only while lod1MotionPlanCovered -- grounded, not climbing,
+        //   swimming or airborne, no trade/market/errand/operator override -- and only while the goal sits
+        //   within the bot's real basic-attack vertical reach. Anything else falls through to real physics.
+        // TRAVEL: cross-map legs become a timed warp instead of executed portal hops (BotTravelManager).
+        // GRIND: target search, attack planning and real attacks become calibrated kill events emitted
+        //   through MapleMap.damageMonster, so exp, drops, quest credit and spawn bookkeeping stay real.
+        //   The kill rate comes from BotKillCalibration, learned from this bot's own real grinding.
+        // CADENCE: the 50ms -> LOD1_TICK_MS retask itself. Engages only once nothing per-tick remains.
+        public boolean SIMPLIFY_UNOBSERVED_BOTS_PHYSICS = true;  // motion-plan movement instead of physics/nav
+        public boolean SIMPLIFY_UNOBSERVED_BOTS_TRAVEL = true;   // timed warps instead of executed hops
+        public boolean SIMPLIFY_UNOBSERVED_BOTS_GRIND = true;    // abstract kill events instead of real combat
+        public boolean SIMPLIFY_UNOBSERVED_BOTS_CADENCE = true;  // the 50ms->500ms tick retask itself
+        // LOD1 coarse tick interval (ms) and the player-free hysteresis before a LOD0->LOD1 downgrade.
+        public int LOD1_TICK_MS = 500;
+        public long LOD_DOWNGRADE_HYSTERESIS_MS = 10_000L;
+        public boolean CHILL_SESSION_ENABLED = true;       // bots can "log in to chill": spend a half-length
+                                                           // session lingering in town instead of grinding
+        public double CHILL_SESSION_MULTIPLIER = 1.0;      // scales the per-login chill chance (0 = never chill)
+        public int MANAGED_POOL_MAX = 1000;                 // backstop cap on the non-retired bot roster. NOT
+                                                           // the online count (that's the curve x multiplier);
+                                                           // autogen only fires under deficit, so the pool
+                                                           // self-limits near peak target. Set comfortably
+                                                           // above peak target (curve_max x multiplier) so it
+                                                           // never throttles fill; it's a runaway guard, not a
+                                                           // throttle.
+        public int HARDCORE_CAP = 5;                       // max bots that never retire (the veterans)
+        public boolean POPULATION_AUTOGEN = true;          // generate fresh bots when the pool is short
+        public double POPULATION_AUTOGEN_FILL = 0.2;       // fraction of the remaining deficit to generate per
+                                                           // sweep. Small = organic trickle; the fast-start ramp
+                                                           // (below) is what makes a fresh world fill quickly,
+                                                           // not a big per-sweep burst. Tracks the multiplier
+                                                           // since the deficit does.
+        public int POPULATION_AUTOGEN_MAX = 20;            // hard cap on bots generated in a single sweep, so a
+                                                           // huge deficit can't stall the timer thread
+        public long POPULATION_FASTSTART_MS = 30_000L;     // on enable, ramp the population in over this window
+        public long POPULATION_FASTSTART_INTERVAL_MS = 5_000L; // ...sweeping this often during the ramp (vs the
+                                                           // POPULATION_SWEEP_MS steady cadence afterwards)
+        public double POPULATION_CREW_FRACTION = 0.30;     // target share of the LIVE population that should be
+                                                           // crew members (the rest are soloists). Each sweep
+                                                           // brings crews/soloists up (or thins soloists) to keep
+                                                           // the live split roughly here, so crews don't crowd out
+                                                           // soloists.
+        public int POPULATION_CREW_MIN = 2;                // crew size range when auto-generating a crew
+        public int POPULATION_CREW_MAX = 6;
+
+        // Grind dispersion: each other bot/player already on (or committed to) a candidate map counts as
+        // this many extra spawn-competitors, so crowded maps yield fewer kills/h and bots spread out
+        // instead of stacking / kill-stealing. 0 disables. See BotOccupancy + BotGrindPlanner spawn-share.
+        public double CROWD_PENALTY_FACTOR = 2.0;
+        // Only count a character as crowd competition if it's actually contesting spawns: a bot in an
+        // active combat mode, or a human who attacked within this window. A standing/socializing player
+        // (or a following/idle bot) is ignored, so bots don't visibly avoid maps people are watching on.
+        public long ACTIVE_GRIND_WINDOW_MS = 60_000;
+
+        // Travel-time penalty floor: the minimum score multiplier a far map keeps (BotTravelCost). At
+        // 0.5 even the far side of the world stays half-valued, so a genuinely better distant map can
+        // still win - the penalty deters, it doesn't forbid.
+        public double TRAVEL_PENALTY_FLOOR = 0.5;
+
+        // Ad-hoc party-up (BotSocialManager): a solo self-owned autopilot bot, co-located with another,
+        // may offer to party (trait-gated). Cosmetic chatter + real server-side party; never a player's
+        // companion. false disables the whole behavior.
+        public boolean SOCIAL_PARTY_ENABLED = true;
+        // A solo self-owned autopilot bot may also proactively invite a co-located REAL PLAYER to party
+        // (trait-gated, exp-range-aware). The player chooses via the normal invite UI — never auto-joined.
+        // Gated separately since unsolicited invites are more intrusive than bot-to-bot chatter.
+        public boolean SOCIAL_INVITE_PLAYERS = true;
+        // Fixed SoloMapling dialogue, one world-wide broadcast at a time, independent of population.
+        public boolean AMBIENT_MEGAPHONES_ENABLED = true;
+        public int AMBIENT_AVATAR_MEGAPHONE_PERCENT = 25;
+        public int AMBIENT_MEGAPHONE_MIN_MS = 30_000;
+        public int AMBIENT_MEGAPHONE_MAX_MS = 90_000;
+
+        // Grind loot convenience: loot competes with mob navigation only when
+        // lootDistSq < mobDistSq * ratio. 0.09 ≈ loot within 30% of mob distance.
+        public float GRIND_LOOT_CONVENIENCE_RATIO = 0.09f;
+        public int   GRIND_LOOT_RETRY_SUPPRESS_MS = 5_000;
+
+        // Debug aid: keep stuck detection/logging active, but disable automatic recovery jumps
+        // so pathing failures remain visible in logs and at runtime.
+        public boolean ENABLE_UNSTUCK = false;
+
+        // Gachapon (BotGachaponManager): autopilot bots spend NX earned from looted NX cards on
+        // gachapon, chasing uniques by expected value. Kill switch + the spend knobs, all visible.
+        public boolean GACHAPON_ENABLED = true;
+        // Living-economy free-market sessions: autopilot bots with sellable surplus open real
+        // hired-merchant stalls in FM rooms and browse others' (docs/bot/economy.md).
+        public boolean FM_MARKET_ENABLED = true;
+        // Chance a townside rest break pops into the free market to browse/hang out even with nothing
+        // to sell - the FM is ~1 hop from most towns, so idle bots congregating there make the market
+        // feel alive (more foot traffic = more browsing + shout-trade chances). Satiation still gates
+        // repeats, so this is a per-break bias, not a treadmill.
+        public double FM_SOCIAL_BREAK_CHANCE = 0.4;
+        // Keep at least this much account NX in reserve - bots gamble only the surplus above it.
+        public int GACHA_NX_RESERVE = 1_000;
+        // EV planning horizon: how many rolls a trip is assumed to do when ranking towns (plannedRolls,
+        // amortizes travel - a far town only pays off once enough rolls are banked). The ACTUAL spend is
+        // now bounded per bot by a personality fraction of spare NX (BotPersonality.gachaSpendFrac), not
+        // by this count, so individual bots gamble differently. Kept as the ranking horizon only.
+        public int GACHA_TICKETS_PER_TRIP = 20;
+        // A town's net TRIP score (planned rolls x (roll value - ticket price), minus the travel
+        // penalty, in NX-equivalent units) must clear this for the bot to make the trip - otherwise it
+        // hoards the NX for a better/closer pool, or saves up to amortize a far one.
+        public double GACHA_MIN_NET_EV = 50.0;
+        // Converts an equip's upgrade SCORE (the grind-advisor DPS-gain SSOT) to NX-equivalent so the
+        // "best gacha that suits self" signal is comparable to resale EV and the ticket price. Higher =
+        // the bot chases gear upgrades harder vs raw resale/uniques. (~one ticket per 160 score gain.)
+        public double GACHA_UPGRADE_NX_PER_SCORE = 5.0;
+
+        // Autonomous (ownerless) 1st-job pick weights (BotBuildManager.pickWeightedJob). Relative
+        // weights across the five explorer classes; uniform by default. A class absent from the map
+        // is treated as weight 1. 2nd-job picks are uniform among the branch's options (no knob).
+        public Map<Job, Integer> JOB_WEIGHTS = new EnumMap<>(Map.of(
+                Job.WARRIOR, 1, Job.MAGICIAN, 1, Job.BOWMAN, 1, Job.THIEF, 1, Job.PIRATE, 1));
+
+    }
+
+    /** Singleton config — replace with `cfg = new Config()` after hotswapping to reset. */
+    public static Config cfg = new Config();
+
+    public static BotManager getInstance() { return instance; }
+
+    // Public facade for the !botcfg GM command (BotCombatManager is package-private).
+    public static List<String> botCombatConfigLines() { return BotCombatManager.configFieldLines(); }
+    public static String botCombatConfigLine(String name) { return BotCombatManager.configFieldLine(name); }
+    public static String setBotCombatConfig(String name, String value) { return BotCombatManager.setConfigField(name, value); }
+
+    // ownerCharId → list of owned bot entries (1:N)
+    private final Map<Integer, List<BotEntry>> bots = new ConcurrentHashMap<>();
+    private final Map<Integer, BotEntry> botsByCharId = new ConcurrentHashMap<>();
+    // Serializes the dedup-sweep + add in registerBotInternal so two threads registering the SAME bot
+    // character concurrently (overlapping @botpop fast-start sweeps on the multi-worker TimerManager
+    // pool) can't both survive the sweep and leave two tick tasks driving one character.
+    private final Object registryLock = new Object();
+    // charId currently mid-spawn: stops two concurrent spawnManagedBot calls for the same id from both
+    // loading the character (double PlayerStorage add) and registering before either is visible.
+    private final java.util.Set<Integer> spawningBotIds = ConcurrentHashMap.newKeySet();
+    // Periodic nav-graph cache eviction: started once on the first bot registration (so TimerManager is
+    // up) and capped to one sweep regardless of bot count.
+    private final java.util.concurrent.atomic.AtomicBoolean graphEvictionStarted =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final long GRAPH_EVICT_SWEEP_MS = 60_000L;
+    private static final long GRAPH_EVICT_GRACE_MS = 300_000L; // map idle this long -> its graph is dropped
+    // ownerCharId → current formation (in-memory only, defaults to stagger)
+    private final Map<Integer, FormationState> ownerFormations = new ConcurrentHashMap<>();
+    // ownerCharId → cluster-anchor town position. First bot to warp picks a random
+    // portal in the return map; later bots warp to a randomized nearby offset.
+    // Cleared when the owner becomes active again.
+    private final Map<Integer, Point> townClusterAnchors = new ConcurrentHashMap<>();
+    // gmCharId → charId the GM is inspecting (!inspect). One target at a time; appended to the GM's
+    // bot-equip window roster so its inventory shows without any follow/formation side effect.
+    private final Map<Integer, Integer> inspectTargets = new ConcurrentHashMap<>();
+    enum FormationType { STAGGER, RANDOM, STACK, SPREAD, LEFT, RIGHT }
+
+    record FormationState(FormationType type, int px, int snapRange) {
+        static FormationState defaultStagger() { return new FormationState(FormationType.STAGGER, cfg.FOLLOW_STAGGER, BotMovementManager.cfg.FOLLOW_Y_CAP); }
+        int offsetFor(int idx, int total) {
+            return switch (type) {
+                case STAGGER -> (idx % 2 == 0 ? 1 : -1) * (idx / 2 + 1) * px;
+                // range scales with total so avg spread matches stagger: ±(px/2 * total)
+                case RANDOM  -> { int range = px * total / 2; yield range > 0 ? ThreadLocalRandom.current().nextInt(-range, range + 1) : 0; }
+                case STACK   -> 0;
+                // idx 0 = owner, then alternating ±: 0, +px, -px, +2px, -2px …
+                case SPREAD  -> idx == 0 ? 0 : (idx % 2 == 1 ? 1 : -1) * ((idx + 1) / 2) * px;
+                case LEFT    -> -(idx + 1) * px;
+                case RIGHT   ->  (idx + 1) * px;
+            };
+        }
+    }
+
+    record TargetSnapshot(FormationState formation,
+                          Point rawOwnerPos,
+                          Point followAnchorPos,
+                          String followAnchorName,
+                          Point followBasePos,
+                          Point followTargetPos,
+                          Point moveTargetPos,
+                          Point farmAnchorPos,
+                          Point grindTargetPos,
+                          Point primaryTargetPos,
+                          String primaryTargetSource) {
+        Point steeringTargetPos(BotEntry entry) {
+            return entry.navTargetPos != null ? new Point(entry.navTargetPos) : new Point(primaryTargetPos);
+        }
+
+        String steeringTargetSource(BotEntry entry) {
+            return entry.navTargetPos != null ? "nav-waypoint" : primaryTargetSource;
+        }
+    }
+
+    private record LocalOpportunityAttackResult(boolean consumedTick, Point targetPos) {}
+
+    private static final Pattern DISMISS_PATTERN = Pattern.compile(
+            "\\b(dismiss|disown|release)\\s+(\\S+)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern RECRUIT_PATTERN = Pattern.compile(
+            "\\b(recruit|adopt|hire|claim)\\s+(\\S+)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FORMATION_PATTERN = Pattern.compile(
+            "\\b(?:formation|form)\\b(?:\\s+(stagger|split|random|stack|spread|tight|loose|left|right|snap)(?:\\s+(\\d+|tight|loose|on|off))?)?",
+            Pattern.CASE_INSENSITIVE);
+    private static final int MIN_PREFIX_TARGET_LENGTH = 2;
+    private static final int PLATFORM_EDGE_INSET_PX = 12;
+    private static final int BOT_TICK_FAILURE_LIMIT = 3;
+    private static final long BOT_TICK_FAILURE_WINDOW_MS = 10_000L;
+
+    private Character resolveFollowTarget(Character owner, String targetToken) {
+        if (owner == null || targetToken == null || targetToken.isBlank()) {
+            if (owner != null) {
+                owner.yellowMessage("Can't follow that target.");
+            }
+            return null;
+        }
+
+        List<Character> candidates = new ArrayList<>();
+        if (owner.isLoggedinWorld()) {
+            candidates.add(owner);
+        }
+        if (owner.getParty() != null) {
+            for (Character member : owner.getPartyMembersOnline()) {
+                if (member == null || !member.isLoggedinWorld() || member.getId() == owner.getId()) {
+                    continue;
+                }
+                candidates.add(member);
+            }
+        }
+        for (BotEntry sibling : getBotEntries(owner.getId())) {
+            Character siblingBot = sibling.bot;
+            if (siblingBot == null || !siblingBot.isLoggedinWorld()) {
+                continue;
+            }
+            boolean duplicate = false;
+            for (Character candidate : candidates) {
+                if (candidate.getId() == siblingBot.getId()) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                candidates.add(siblingBot);
+            }
+        }
+
+        for (Character candidate : candidates) {
+            if (candidate.getName().equalsIgnoreCase(targetToken)) {
+                return candidate;
+            }
+        }
+
+        if (targetToken.length() < MIN_PREFIX_TARGET_LENGTH) {
+            owner.yellowMessage("Follow target must use at least " + MIN_PREFIX_TARGET_LENGTH + " letters.");
+            return null;
+        }
+
+        List<Character> prefixMatches = new ArrayList<>();
+        for (Character candidate : candidates) {
+            if (candidate.getName().regionMatches(true, 0, targetToken, 0, targetToken.length())) {
+                prefixMatches.add(candidate);
+            }
+        }
+        if (prefixMatches.size() == 1) {
+            return prefixMatches.get(0);
+        }
+        if (prefixMatches.size() > 1) {
+            StringBuilder message = new StringBuilder("Ambiguous follow target '")
+                    .append(targetToken)
+                    .append("': ");
+            for (int i = 0; i < prefixMatches.size(); i++) {
+                if (i > 0) {
+                    message.append(", ");
+                }
+                message.append(prefixMatches.get(i).getName());
+            }
+            owner.yellowMessage(message.toString());
+            return null;
+        }
+
+        owner.yellowMessage("Can't follow '" + targetToken + "'. Target must be a same-party character or one of your active bots.");
+        return null;
+    }
+
+    private boolean applyFollowTargetCommand(Character owner, List<BotEntry> entries, String targetToken) {
+        Character target = resolveFollowTarget(owner, targetToken);
+        if (target == null) {
+            return true;
+        }
+        for (BotEntry entry : entries) {
+            if (entry == null || entry.bot == null || entry.bot.getId() == target.getId()) {
+                continue;
+            }
+            clearDebugCommander(entry); // real owner commands -> owner wins
+            BotChatManager.queueBotReply(entry, randomReply(List.of(
+                    "ok",
+                    "k",
+                    "sure",
+                    "omw",
+                    "got it",
+                    "following " + target.getName(),
+                    "ok, following " + target.getName()
+            )));
+            after(randMs(250, 750), () -> {
+                BotEquipManager.autoEquip(entry.bot, entry.owner, entry.pendingLootOfferItem);
+                BotPotionManager.checkPotShareOnModeStart(entry, entry.bot);
+                issueFollow(entry, target);
+            });
+        }
+        return true;
+    }
+
+    static String randomReply(List<String> list) {
+        return list.get(ThreadLocalRandom.current().nextInt(list.size()));
+    }
+
+    /** Schedule {@code r} to run after {@code ms} milliseconds. */
+    static ScheduledFuture<?> after(long ms, Runnable r) {
+        return TimerManager.getInstance().schedule(r, ms);
+    }
+
+    /** Uniform random delay in [lo, hi) ms — use wherever a fixed delay would feel robotic. */
+    static long randMs(int lo, int hi) {
+        return lo + ThreadLocalRandom.current().nextInt(hi - lo);
+    }
+
+    // Human "settle/read" pauses before a bot fires an NPC interaction. base + uniform[0,jitter) ms.
+    static final int NPC_READ_DELAY_MS = 2_000, NPC_READ_JITTER_MS = 20_000;   // quest accept/turn-in, job advance — reading dialogue
+    static final int NPC_TALK_DELAY_MS = 2_000, NPC_TALK_JITTER_MS = 5_000;    // taxi/ferry edges — quick "hi, one ticket please"
+    static final int POST_WARP_DELAY_MS = 2_000, POST_WARP_JITTER_MS = 2_000;  // getting bearings after any map change
+
+    /**
+     * Reading/talking pause while standing at an NPC. On the first in-range tick (timer at 0) it arms
+     * a jittered pause and returns false; returns true only once the pause elapses. Callers MUST call
+     * {@link #npcDwellReset} on every not-yet-in-range tick so the timer re-arms fresh at the next NPC.
+     */
+    // Test seam: the humanlike NPC/portal dwell pauses use wall-clock time, so unit tests that tick
+    // a flow once would have to sleep out the 2-7s pause. Tests set this true to fire NPC actions /
+    // portal entry on the in-range tick instead. Production default keeps the pause.
+    static boolean dwellInstant = false;
+
+    static boolean npcDwellReady(BotEntry entry, int baseMs, int jitterMs) {
+        if (dwellInstant) {
+            return true;
+        }
+        long now = System.currentTimeMillis();
+        if (entry.npcDwellUntilMs == 0L) {
+            entry.npcDwellUntilMs = now + baseMs + ThreadLocalRandom.current().nextInt(jitterMs);
+            return false;
+        }
+        return now >= entry.npcDwellUntilMs;
+    }
+
+    static void npcDwellReset(BotEntry entry) {
+        entry.npcDwellUntilMs = 0L;
+    }
+
+    /** Arm the post-map-change settle window; called wherever a map change is detected. */
+    static void armPostWarpQuiet(BotEntry entry) {
+        long now = System.currentTimeMillis();
+        entry.postWarpQuietUntilMs = now
+                + POST_WARP_DELAY_MS + ThreadLocalRandom.current().nextInt(POST_WARP_JITTER_MS);
+        // Stagger supply sharing too: a cohort that lands together must not all fire requests at once.
+        entry.shareGateUntilMs = now + SHARE_GATE_DELAY_MS + ThreadLocalRandom.current().nextInt(SHARE_GATE_JITTER_MS);
+    }
+
+    static final int SHARE_GATE_DELAY_MS = 5_000;
+    static final int SHARE_GATE_JITTER_MS = 5_000;
+
+    /** SSOT settle gate for ALL supply sharing (pot/ammo/rock): true once this bot's map-change/spawn
+     *  jitter window has elapsed. Keeps a freshly-landed cohort from firing every share request at once. */
+    static boolean supplySharingSettled(BotEntry entry) {
+        return entry != null && System.currentTimeMillis() >= entry.shareGateUntilMs;
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    public void registerBot(int ownerCharId, Character owner, Character bot) {
+        registerBotInternal(ownerCharId, owner, bot, false);
+    }
+
+    public BotEntry registerSpawnedBot(int ownerCharId, Character owner, Character bot) {
+        // Pre-build the spawn index + world graph off-thread: the first grind/autopilot
+        // decision otherwise pays ~30s of WZ scanning right when the owner asks for it.
+        BotGrindAdvisor.warmCachesAsync();
+        BotChatManager.warmMapNameIndex(); // off-thread map-name index so the first "goto <name>" resolves without a retry
+        return registerBotInternal(ownerCharId, owner, bot, true);
+    }
+
+    public record SpawnResult(boolean success, Character bot, boolean autoRegistered, String errorMessage) {
+        static SpawnResult ok(Character bot, boolean autoRegistered) {
+            return new SpawnResult(true, bot, autoRegistered, null);
+        }
+        static SpawnResult fail(String msg) {
+            return new SpawnResult(false, null, false, msg);
+        }
+    }
+
+    /** Spawn a registered bot for the given owner, leaving it at its legal login/current map and entering follow mode. */
+    public SpawnResult spawnBotForOwner(Character owner, String botName) {
+        BotOwnershipService ownershipService = BotOwnershipService.getInstance();
+        BotOwnershipService.ResolvedCharacter resolved = ownershipService.resolveCharacterByName(botName);
+        if (resolved == null) {
+            return SpawnResult.fail("No character named '" + botName + "' exists.");
+        }
+        if (resolved.isOnline() && !resolved.isOnlineAsBot()) {
+            return SpawnResult.fail("'" + botName + "' is currently being played by a real player.");
+        }
+        BotOwnershipService.AuthorizationResult auth = ownershipService.ensureCanControl(owner, resolved);
+        if (!auth.allowed()) {
+            return SpawnResult.fail(auth.failureMessage());
+        }
+        if (resolved.isOnline()) {
+            Character botChar = resolved.onlineCharacter();
+            Character activeOwner = getActiveOwnerByBotCharId(botChar.getId());
+            if (activeOwner != null && activeOwner.getId() != owner.getId()) {
+                return SpawnResult.fail("Bot '" + botName + "' is controlled by " + activeOwner.getName() + ".");
+            }
+            BotEntry entry = activeOwner == null
+                    ? registerSpawnedBot(owner.getId(), owner, botChar)
+                    : getBotEntry(owner.getId(), botChar.getId());
+            placeSpawnedOnlineBot(entry, botChar);
+            if (entry != null) {
+                issueFollowOwner(entry);
+            }
+            return SpawnResult.ok(botChar, auth.autoRegistered());
+        } else {
+            try {
+                Character botChar = loadOfflineBot(resolved.id(), owner.getClient().getWorld(), owner.getClient().getChannel());
+                BotEntry entry = registerSpawnedBot(owner.getId(), owner, botChar);
+                issueFollowOwner(entry);
+                return SpawnResult.ok(botChar, auth.autoRegistered());
+            } catch (SQLException e) {
+                log.warn("Failed to load bot character '{}' for owner '{}'", botName, owner.getName(), e);
+                return SpawnResult.fail("Failed to load bot character '" + botName + "'.");
+            }
+        }
+    }
+
+    /**
+     * Spawn an offline bot character as a SELF-OWNED autopilot bot (runtime owner == the bot) and
+     * immediately kick it into solo autopilot. Unlike {@link #spawnBotForOwner} (which follows a
+     * human owner), this is the launch path for ownerless bots: nothing else would ever issue a play
+     * command, so it auto-starts the same independent-play autopilot the {@code @botme} takeover uses.
+     */
+    public SpawnResult spawnOwnerlessBot(Character requester, String botName) {
+        BotOwnershipService ownershipService = BotOwnershipService.getInstance();
+        BotOwnershipService.ResolvedCharacter resolved = ownershipService.resolveCharacterByName(botName);
+        if (resolved == null) {
+            return SpawnResult.fail("No character named '" + botName + "' exists.");
+        }
+        if (resolved.isOnline()) {
+            return SpawnResult.fail("'" + botName + "' is already online.");
+        }
+        try {
+            Character botChar = loadOfflineBot(resolved.id(),
+                    requester.getClient().getWorld(), requester.getClient().getChannel());
+            BotEntry entry = registerSpawnedBot(botChar.getId(), botChar, botChar); // self-owned: owner == bot
+            startTakeoverAutopilot(entry, botChar); // no owner to command it - auto-start solo autopilot
+            return SpawnResult.ok(botChar, false);
+        } catch (SQLException e) {
+            log.warn("Failed to load ownerless bot character '{}'", botName, e);
+            return SpawnResult.fail("Failed to load bot character '" + botName + "'.");
+        }
+    }
+
+    /** Dedicated PQ fixture login: no population autopilot or social recruitment window. */
+    public SpawnResult spawnPqCompanion(Character leader, int charId) {
+        try {
+            Character bot = loadOfflineBot(charId, leader.getWorld(), leader.getClient().getChannel());
+            BotPqEquipmentPolicy.register(bot);
+            registerSpawnedBot(leader.getId(), leader, bot);
+            return SpawnResult.ok(bot, false);
+        } catch (SQLException e) {
+            log.warn("Failed to load PQ companion {}", charId, e);
+            return SpawnResult.fail("Could not log in a PQ companion.");
+        }
+    }
+
+    public void joinBotToOwnerParty(Character owner, Character bot) {
+        partyUp(owner, bot);
+    }
+
+    /**
+     * Put {@code joiner} into {@code leader}'s party (creating it if leader has none), leaving any
+     * other party first. The SSOT for ALL bot party formation — owner-join, ad-hoc social party-up,
+     * crews. Server-side (no invite packet). Deliberately does NOT touch ownership: a party-mate gains
+     * no owner privileges (commands, loot/supply priority, trade trust all stay gated on the
+     * registered owner).
+     */
+    /** Public entry for {@code PartyOperationHandler}: does this bot accept a party invite from
+     *  {@code inviter}? Owned companions accept only their owner; self-owned bots decide per
+     *  sociability/level. Delegates to {@link BotSocialManager#acceptsInvite}. */
+    public boolean acceptsPartyInvite(Character bot, Character inviter) {
+        return bot != null && BotSocialManager.acceptsInvite(getEntryByBotCharId(bot.getId()), bot, inviter);
+    }
+
+    public void partyUp(Character leader, Character joiner) {
+        net.server.world.Party joinerParty = joiner.getParty();
+        if (joinerParty != null) {
+            net.server.world.Party leaderParty = leader.getParty();
+            if (leaderParty != null && joinerParty.getId() == leaderParty.getId()) {
+                // Already in the same party — re-mark the member online with a live character ref.
+                PartyCharacter pchar = new PartyCharacter(joiner);
+                pchar.setChannel(joiner.getClient().getChannel());
+                pchar.setMapId(joiner.getMapId());
+                joiner.getWorldServer().updateParty(leaderParty.getId(), PartyOperation.LOG_ONOFF, pchar);
+                joiner.updatePartyMemberHP();
+                return;
+            }
+            // joiner is in a different party — leave it first
+            Party.leaveParty(joinerParty, joiner.getClient());
+        }
+        net.server.world.Party leaderParty = leader.getParty();
+        if (leaderParty == null) {
+            if (!Party.createParty(leader, true)) return;
+            leaderParty = leader.getParty();
+        }
+        if (leaderParty == null) return;
+        if (Party.joinParty(joiner, leaderParty.getId(), true)) {
+            joiner.updatePartyMemberHP();
+        }
+    }
+
+    private BotEntry getBotEntry(int ownerCharId, int botCharId) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries == null) return null;
+        for (BotEntry e : entries) {
+            if (e.bot.getId() == botCharId) return e;
+        }
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // @botme / @botparty: the player logs out and their character keeps playing
+    // as a self-owned bot (owner == the bot itself). Logging back in on the
+    // character takes it over again (Character.newClient -> cleanupBotRuntimeState).
+    // -------------------------------------------------------------------------
+
+
+    /** @autosell (admin debug): what the bot sell-trash pipeline would unload from this
+     *  character, grouped by inventory type. The player stays connected. */
+    public List<String> autoSellPreview(Character chr) {
+        return BotInventoryManager.autoSellPreviewLines(chr);
+    }
+
+    /** @autosell confirm: instantly sells everything the preview lists at NPC prices. */
+    public List<String> autoSellConfirm(Client c) {
+        return BotInventoryManager.autoSellExecute(c);
+    }
+
+    /** !inspectsell (admin debug): reorder a character's bag as sells | divider gap | keeps. */
+    public List<String> inspectSellArrange(Character target) {
+        return BotInventoryManager.inspectSellArrange(target);
+    }
+
+    /**
+     * Disconnect the client and respawn its character as a self-owned autopilot bot.
+     * Returns an error message to show the player, or null when the takeover is underway.
+     * {@code requireBotParty} (the @botparty form) refuses unless every other online
+     * party member is already a bot.
+     */
+    public String takeOverAsBot(Client c, boolean requireBotParty) {
+        Character player = c.getPlayer();
+        if (player == null || c instanceof BotClient || player.getMap() == null) {
+            return "can't do that right now.";
+        }
+        if (requireBotParty && !inPartyOfBots(player)) {
+            return "@botparty needs a party where everyone else is a bot. Use @botme to go solo.";
+        }
+        if (player.getTrade() != null) {
+            return "finish or cancel your trade first.";
+        }
+        player.yellowMessage("Switching out - this character keeps playing as a bot. Log back in anytime to take over.");
+        after(randMs(600, 900), () -> swapToBotInPlace(c, player));
+        return null;
+    }
+
+    /**
+     * Seamless takeover: attach a BotClient to the LIVE character and sever it from the real
+     * socket BEFORE disconnecting, so the char never leaves the map — observers see no
+     * despawn/respawn, position and buffs stay intact, and the bot announces its plan right
+     * away. {@link Client}'s disconnect skips all character-side cleanup when the client has
+     * no player, but still logs the ACCOUNT out and closes the session — so the player can
+     * log back in anytime (the normal reclaim path swaps the client back via
+     * Character.newClient).
+     */
+    private void swapToBotInPlace(Client c, Character player) {
+        if (c.getPlayer() != player || player.getMap() == null) {
+            return; // player logged out / moved on during the grace delay
+        }
+        BotClient botClient = new BotClient(c.getWorld(), c.getChannel());
+        botClient.setPlayer(player);
+        botClient.setAccID(player.getAccountID());
+        botClient.setAccountName(c.getAccountName());
+        player.setClient(botClient);
+        c.setPlayer(null);
+        c.disconnect(false, false);
+
+        BotEntry entry = registerSpawnedBot(player.getId(), player, player); // self-owned
+        entry.commandAutopilot = true; // real player's own char on autopilot via @botme/@botparty
+        startTakeoverAutopilot(entry, player);
+    }
+
+    /** True when the player is partied with at least one bot and no other online humans. */
+    private static boolean inPartyOfBots(Character player) {
+        if (player.getParty() == null) {
+            return false;
+        }
+        boolean sawBot = false;
+        for (Character member : player.getPartyMembersOnline()) {
+            if (member == null || member.getId() == player.getId()) {
+                continue;
+            }
+            if (member.getClient() instanceof BotClient) {
+                sawBot = true;
+            } else {
+                return false; // another human in the party
+            }
+        }
+        return sawBot;
+    }
+
+    private void startTakeoverAutopilot(BotEntry entry, Character botChar) {
+        List<BotEntry> partyBots = partyBotEntries(botChar);
+        boolean partyOfBots = partyBots.size() >= 2 && onlinePartyMembersAllBots(botChar);
+        botSay(botChar, randomReply(List.of(
+                "taking it from here", "autopilot time", "ok, playing on my own now")));
+        if (partyOfBots) {
+            BotAutopilotManager.startParty(botChar, partyBots);
+        } else {
+            BotAutopilotManager.start(entry, botChar);
+        }
+    }
+
+    static boolean onlinePartyMembersAllBots(Character botChar) {
+        if (botChar.getParty() == null) {
+            return false;
+        }
+        for (Character member : botChar.getPartyMembersOnline()) {
+            if (member != null && !(member.getClient() instanceof BotClient)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when {@code bot} is in a party that contains at least one online REAL (non-bot) player.
+     * The stay-online QoL guard: while a bot is grouped with a human, it skips schedule-driven
+     * logout/break/thinning so the player's session isn't disrupted by bots winking out.
+     */
+    public static boolean partyHasRealPlayer(Character bot) {
+        if (bot == null || bot.getParty() == null) {
+            return false;
+        }
+        for (Character member : bot.getPartyMembersOnline()) {
+            if (member != null && member.getId() != bot.getId()
+                    && !(member.getClient() instanceof BotClient)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // === Unobserved-map LOD (docs/bot/living-server-design.md) ===
+
+    // Per-mapId cache of portal-neighbor map ids (BotWorldGraph portal adjacency, resolved once).
+    private static final Map<Integer, int[]> lodNeighborCache = new ConcurrentHashMap<>();
+
+    /**
+     * Maps pinned to full fidelity regardless of who is watching (debug/calibration; see {@code /api/lod}).
+     * A pinned map behaves as though a real player stood on it: its bots hold LOD0, so they run real
+     * combat, real physics and the 50ms tick while the rest of the server stays coarse. That is how
+     * {@code tools/lod_grind_audit.py} measures a ground-truth kill rate — pinning the whole server back
+     * to full fidelity does not fit in the CPU budget (see the SIMPLIFY_UNOBSERVED_BOTS_* notes on Config).
+     * Never persisted: a restart clears every pin.
+     */
+    private static final Set<Integer> forcedLod0Maps = ConcurrentHashMap.newKeySet();
+
+    /** Pin/unpin one map to full fidelity. Returns true when the pinned set actually changed. */
+    static boolean forceLod0(int mapId, boolean pinned) {
+        return pinned ? forcedLod0Maps.add(mapId) : forcedLod0Maps.remove(mapId);
+    }
+
+    static void clearForcedLod0() {
+        forcedLod0Maps.clear();
+    }
+
+    static Set<Integer> forcedLod0Maps() {
+        return Collections.unmodifiableSet(forcedLod0Maps);
+    }
+
+    /**
+     * A map is "effectively observed" if it — or any of its 1-portal-edge neighbor maps — is observed
+     * by a real player. Observer SSOT is {@link MapleMap#isObservedByPlayer()} (counts hidden {@code
+     * !hide} GMs, excludes bots and {@code !hidebot} GMs). The 1-edge pre-warm keeps a bot at full
+     * fidelity BEFORE a player can walk through a portal onto its map. Neighbor maps that aren't loaded
+     * hold no players, so they're skipped without being built.
+     */
+    static boolean effectivelyObserved(MapleMap map) {
+        if (map == null) {
+            return false;
+        }
+        if (map.isObservedByPlayer()) {
+            return true;
+        }
+        int[] neighbors = lodNeighborCache.computeIfAbsent(map.getId(), k -> BotWorldGraph.get().neighbors(k));
+        if (neighbors.length == 0) {
+            return false;
+        }
+        var mapFactory = map.getChannelServer().getMapFactory();
+        for (int neighborId : neighbors) {
+            if (mapFactory.isMapLoaded(neighborId) && mapFactory.getMap(neighborId).isObservedByPlayer()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Recompute a bot's LOD for this tick. LOD0 (full fidelity) when its map is pinned via {@code /api/lod},
+     * effectively observed, its party has a real player, or it is in an active trade. Otherwise LOD1, after the map +
+     * neighborhood has been player-free for the downgrade hysteresis window (no thrash on map-hoppers).
+     */
+    private void updateLod(BotEntry entry, Character bot) {
+        BotEntry.Lod prev = entry.lod;
+        boolean lod0Now = forcedLod0Maps.contains(bot.getMapId())
+                || BotKpqRun.inInstance(bot)
+                || BotLpqRun.inInstance(bot)
+                || BotOpqRun.inInstance(bot)
+                || BotLmpqRun.inInstance(bot)
+                || BotCarnivalRun.inInstance(bot)
+                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot)
+                || BotZakumBattle.inInstance(bot)
+                || BotZakumBattle.belongsTo(bot, entry.ownerCharId)
+                || effectivelyObserved(bot.getMap())
+                || partyHasRealPlayer(bot)
+                || bot.getTrade() != null;
+        LodDecision d = decideLod(entry.lod, entry.lodUnobservedSinceMs, lod0Now,
+                System.currentTimeMillis(), cfg.LOD_DOWNGRADE_HYSTERESIS_MS);
+        entry.lod = d.lod();
+        entry.lodUnobservedSinceMs = d.unobservedSinceMs();
+        if (prev == BotEntry.Lod.LOD0 && entry.lod == BotEntry.Lod.LOD1) {
+            freezeIntoMotionPlan(entry, bot);         // §4 LOD0->LOD1: freeze physics into a plan
+        } else if (prev == BotEntry.Lod.LOD1 && entry.lod == BotEntry.Lod.LOD0) {
+            materializeBotToLod0(entry);              // §4 LOD1->LOD0: resume physics from the lerp pos
+        }
+    }
+
+    /** LOD0->LOD1 (design §4): freeze the bot's current position as the motion-plan origin and drop any
+     *  stale plan; the next covered movement tick builds a fresh plan. Y is remembered as the hold-Y. */
+    private void freezeIntoMotionPlan(BotEntry entry, Character bot) {
+        Point pos = bot.getPosition();
+        entry.motionFrom = new Point(pos.x, pos.y);
+        entry.motionTo = null;
+        entry.motionHoldY = pos.y;
+    }
+
+    /**
+     * LOD1->LOD0 (design §4): materialize the bot from its motion plan back onto real physics —
+     * finalize the lerp position, clear the plan, snap to the foothold below (spawnIntoMap settles it),
+     * mark LOD0, and (once Stage 3's cadence flip is live) retask to 50ms. Called from the bot's own
+     * tick (updateLod) and synchronously from {@link #materializeBotsForObserver} at addPlayer.
+     */
+    private void materializeBotToLod0(BotEntry entry) {
+        Character bot = entry.bot;
+        if (bot == null || bot.getMap() == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Point pos = BotPhysicsEngine.motionLerp(entry.motionFrom, entry.motionTo,
+                entry.motionDepartMs, entry.motionArriveMs, entry.motionHoldY, now);
+        if (pos != null) {
+            bot.setPosition(pos);
+        }
+        entry.motionFrom = null;
+        entry.motionTo = null;
+        BotPhysicsEngine.spawnIntoMap(entry, bot);            // snap to foothold below / settle under gravity
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        entry.lod = BotEntry.Lod.LOD0;
+        entry.lodUnobservedSinceMs = 0L;
+        retaskToFullFidelity(entry);                          // no-op until the Stage 3 cadence flip
+        BotMovementManager.broadcastMovement(entry);          // now observed — push the settled position
+    }
+
+    /**
+     * Synchronous LOD1->LOD0 snap for every bot on {@code map}, invoked from {@link server.maps.MapleMap#addPlayer}
+     * BEFORE the entering player's spawn packets are built (design §4) so no bot is seen floating/underground
+     * on entry. Backstops the 1-portal-edge pre-warm for teleport/scroll entries that skip adjacency.
+     */
+    public void materializeBotsForObserver(server.maps.MapleMap map) {
+        if (map == null) {
+            return;
+        }
+        for (BotEntry entry : botsByCharId.values()) {
+            Character bot = entry.bot;
+            if (bot != null && bot.getMap() == map && entry.lod == BotEntry.Lod.LOD1) {
+                materializeBotToLod0(entry);
+            }
+        }
+    }
+
+    /** Retask a bot back to the full-fidelity 50ms cadence (LOD0 upgrade). Registry-lock-safe. */
+    private void retaskToFullFidelity(BotEntry entry) {
+        if (entry == null || entry.bot == null) {
+            return;
+        }
+        int botCharId = entry.bot.getId();
+        retask(entry, entry.ownerCharId, botCharId, BotMovementManager.cfg.TICK_MS);
+    }
+
+    record LodDecision(BotEntry.Lod lod, long unobservedSinceMs) {}
+
+    /**
+     * Pure LOD hysteresis decision. Observed now => immediate LOD0 and reset the player-free clock.
+     * Otherwise start (or keep) the clock and only downgrade to LOD1 once it has held for {@code
+     * hysteresisMs}; until then the current LOD (normally LOD0) sticks, so a player hopping across the
+     * map's neighborhood can't thrash a bot's fidelity.
+     */
+    static LodDecision decideLod(BotEntry.Lod current, long unobservedSinceMs, boolean lod0Now,
+                                 long now, long hysteresisMs) {
+        if (lod0Now) {
+            return new LodDecision(BotEntry.Lod.LOD0, 0L);
+        }
+        long since = unobservedSinceMs == 0L ? now : unobservedSinceMs;
+        BotEntry.Lod lod = now - since >= hysteresisMs ? BotEntry.Lod.LOD1 : current;
+        return new LodDecision(lod, since);
+    }
+
+    /**
+     * The tick interval (ms) a bot should run at for its current LOD. Returns the full-fidelity
+     * {@code TICK_MS} unconditionally through Stage 2. Movement (§2.1) and travel (§2.2) are now
+     * time-based and cadence-independent, but Stage 2 LOD1 bots still run REAL combat (abstract grind
+     * is Stage 3) — dropping a grinding bot to 500ms would make it attack ~10x slower and wreck its
+     * kill/exp/loot rates. So the 500ms retask stays gated OFF until Stage 3's abstract grind makes the
+     * coarse tick safe: {@code stage3AbstractGrindReady} is flipped there, and only then does a LOD1 bot
+     * with {@code SIMPLIFY_UNOBSERVED_BOTS_CADENCE} (and the physics simplification) drop to LOD1_TICK_MS.
+     * Stage 3 must ALSO exclude bots on a real-walking travel leg (taxi/ferry) and any uncovered state
+     * (see {@link #lod1MotionPlanCovered}) so no raw physics integrator ever runs at 500ms.
+     */
+    private int cadenceForLod(BotEntry entry) {
+        // Stage 3: a covered LOD1 bot runs abstract combat (deadline-driven, cadence-independent),
+        // motion-plan movement (wall-clock lerp) and timed-warp travel — nothing per-tick needs 50ms, so
+        // it drops to the coarse LOD1_TICK_MS. abstractGrindEligible is the SSOT gate shared with the
+        // grind dispatch, so a bot at 500ms is never left running real 50ms-cadence combat at 500ms.
+        if (cfg.SIMPLIFY_UNOBSERVED_BOTS_CADENCE && cfg.SIMPLIFY_UNOBSERVED_BOTS_PHYSICS
+                && abstractGrindEligible(entry)) {
+            return cfg.LOD1_TICK_MS;
+        }
+        return BotMovementManager.cfg.TICK_MS;
+    }
+
+    /**
+     * SSOT gate for Stage 3 coarse operation: a LOD1 bot whose movement state is "covered" (grounded, no
+     * trade/market/errand/operator — see {@link #lod1MotionPlanCovered}) and which is NOT on a
+     * real-walking travel leg (taxi/ferry approach still needs real movement). Shared by
+     * {@link #cadenceForLod} (the 500ms retask) and the grind dispatch (the abstract-kill branch) so the
+     * two can never disagree. Gated by the {@code SIMPLIFY_UNOBSERVED_BOTS_GRIND} toggle.
+     */
+    private boolean abstractGrindEligible(BotEntry entry) {
+        return cfg.SIMPLIFY_UNOBSERVED_BOTS_GRIND
+                && lod1MotionPlanCovered(entry)   // implies lod==LOD1, grounded, no trade/market/errand/operator
+                && entry.followTravelTaxiNpcId == 0 && !entry.followTravelFerry;
+    }
+
+    /** Retask the bot iff its desired LOD cadence differs from its current tick interval. */
+    private void maybeAdjustCadence(BotEntry entry, int ownerCharId, int botCharId) {
+        int desired = cadenceForLod(entry);
+        if (desired != entry.tickIntervalMs) {
+            retask(entry, ownerCharId, botCharId, desired);
+        }
+    }
+
+    /**
+     * Cancel the bot's tick task and re-register it at {@code intervalMs}. Reuses the registry-lock
+     * discipline ({@code kb_bot_double_register_botpop_race}) so a concurrent register/replace of the
+     * same bot can't leave two live tick tasks. No-op if the entry was replaced/removed since (its task
+     * is already cancelled) — re-registering would resurrect a dead entry.
+     */
+    private void retask(BotEntry entry, int ownerCharId, int botCharId, int intervalMs) {
+        synchronized (registryLock) {
+            if (botsByCharId.get(botCharId) != entry) {
+                return;
+            }
+            if (entry.task != null) {
+                entry.task.cancel(false);
+            }
+            entry.task = TimerManager.getInstance().register(
+                    () -> tick(entry, ownerCharId, botCharId), intervalMs);
+            entry.tickIntervalMs = intervalMs;
+        }
+    }
+
+    public Character loadOfflineBot(int charId, int world, int channel) throws SQLException {
+        BotClient botClient = new BotClient(world, channel);
+        Character botChar = Character.loadCharFromDB(charId, botClient, true);
+        botClient.setPlayer(botChar);
+        botClient.setAccID(botChar.getAccountID());
+        Map<Disease, Pair<Long, MobSkill>> diseases =
+                Server.getInstance().getPlayerBuffStorage().getDiseasesFromStorage(charId);
+        if (diseases != null) {
+            botChar.silentApplyDiseases(diseases);
+        }
+
+        MapleMap spawnMap = Server.getInstance().getChannel(world, channel).getMapFactory().getMap(botChar.getMapId());
+        Point spawnPos = resolveSpawnPosition(spawnMap, botChar.getPosition());
+
+        botChar.setMapId(spawnMap.getId());
+        botChar.newClient(botClient);
+        botChar.recalcLocalStats();
+
+        botChar.resetPlayerRates();
+        if (YamlConfig.config.server.USE_ADD_RATES_BY_LEVEL) {
+            botChar.setPlayerRates();
+        }
+        botChar.setWorldRates();
+        botChar.updateCouponRates();
+
+        botChar.setPosition(spawnPos);
+
+        var channelServer = Server.getInstance().getChannel(world, channel);
+        channelServer.addPlayer(botChar);
+        channelServer.getWorldServer().addPlayer(botChar);
+        botChar.setEnteredChannelWorld();
+        try {
+            spawnMap.addPlayer(botChar);
+        } catch (RuntimeException | Error e) {
+            // A failed map entry must not strand the character in channel/world storage: it would be
+            // online with no registry entry (a tickless zombie the sweep evicts and the scheduler
+            // respawns into the same failure, forever). Unwind everything and let the caller see the
+            // original failure.
+            try {
+                spawnMap.removePlayer(botChar);
+                channelServer.removePlayer(botChar);
+                channelServer.getWorldServer().removePlayer(botChar);
+            } catch (Exception cleanup) {
+                log.warn("loadOfflineBot: unwind after failed map entry also failed for charId={}", charId, cleanup);
+            }
+            throw e;
+        }
+        botChar.visitMap(spawnMap);
+        botChar.buffExpireTask();
+        botChar.diseaseExpireTask();
+        botChar.skillCooldownTask();
+        return botChar;
+    }
+
+    static void placeSpawnedOnlineBot(BotEntry entry, Character botChar) {
+        if (entry == null) {
+            botChar.updatePartyMemberHP();
+            return;
+        }
+
+        MapleMap spawnMap = botChar.getMap();
+        Point spawnPos = getInstance().resolveSpawnPosition(spawnMap, botChar.getPosition());
+        BotPhysicsEngine.teleportTo(entry, botChar, spawnPos);
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        entry.deadUntil = 0;
+        entry.lastMapId = spawnMap != null ? spawnMap.getId() : botChar.getMapId();
+        if (spawnMap != null && spawnMap.getFootholds() != null) {
+            BotNavigationGraphProvider.warmGraphAsync(spawnMap, entry.movementProfile);
+        }
+        entry.skipDelayMs = 0;
+        entry.aiTickAccumulatorMs = 0;
+        entry.moveDir = 0;
+        entry.movementBroadcastValid = false;
+        botChar.updatePartyMemberHP();
+    }
+
+    public Point resolveSpawnPosition(MapleMap map, Point desiredPosition) {
+        if (map == null || desiredPosition == null) {
+            return desiredPosition;
+        }
+
+        Point groundPoint = BotPhysicsEngine.findGroundPoint(map, new Point(desiredPosition.x, desiredPosition.y - 1));
+        return groundPoint != null ? groundPoint : desiredPosition;
+    }
+
+    private BotEntry registerBotInternal(int ownerCharId, Character owner, Character bot, boolean normalizeSpawnState) {
+        int botCharId = bot.getId();
+        // Capture the BotEntry directly in the tick lambda instead of re-resolving it from the
+        // registry every tick (ConcurrentHashMap.get + linear CopyOnWriteArrayList scan). The
+        // task is bound to exactly one entry and is cancelled on every removal/replace path, so
+        // the captured reference is always the live entry. The holder breaks the task<->entry
+        // construction cycle (BotEntry.task is final); the only window where ref[0] is null is
+        // before the assignment two lines below, which tickCore already tolerates.
+        // Build off-lock (personality/scroll/graph IO must not serialize spawns): the task self-guards
+        // on ref[0]==null until it's published below, so the tick can't act before the entry is live.
+        BotEntry[] ref = new BotEntry[1];
+        ScheduledFuture<?> task = TimerManager.getInstance().register(
+                () -> tick(ref[0], ownerCharId, botCharId), BotMovementManager.cfg.TICK_MS);
+        BotEntry entry = new BotEntry(bot, owner, task, ownerCharId);
+        ref[0] = entry;
+        entry.tickIntervalMs = BotMovementManager.cfg.TICK_MS; // matches the interval the task registered at
+        entry.movementProfile = BotMovementProfile.fromCharacter(bot);
+        entry.selfScrollEnabled = BotPrefsStore.loadSelfScroll(bot.getId());
+        entry.personality = BotPersonality.loadOrCreate(botCharId);
+        BotNavigationGraphProvider.warmGraphAsync(bot.getMap(), entry.movementProfile);
+        maybeStartGraphEvictionSweep();
+        // Global dedup + atomic publish: a bot character has exactly one runtime owner. Remove any prior
+        // entry for this bot under ANY owner key (relog, takeover, party re-register), not just
+        // ownerCharId, then add ours — all under the lock so a concurrent register of the SAME id can't
+        // interleave. Without atomicity (observed via overlapping @botpop fast-start sweeps on the
+        // multi-worker TimerManager pool) each thread sweeps BEFORE the other adds, neither removes the
+        // other, and both tick tasks survive: one character driven from two positions, attacking from both.
+        synchronized (registryLock) {
+            for (List<BotEntry> list : bots.values()) {
+                list.removeIf(e -> {
+                    if (e.bot.getId() == botCharId) {
+                        cancelBotTask(e);
+                        unindexBotEntry(e);
+                        return true;
+                    }
+                    return false;
+                });
+            }
+            List<BotEntry> entries = bots.computeIfAbsent(ownerCharId, k -> new CopyOnWriteArrayList<>());
+            entries.add(entry);
+            indexBotEntry(entry);
+            FormationState fs = ownerFormations.getOrDefault(ownerCharId, FormationState.defaultStagger());
+            for (int i = 0; i < entries.size(); i++) {
+                entries.get(i).followOffsetX = fs.offsetFor(i, entries.size());
+            }
+        }
+        if (normalizeSpawnState) {
+            normalizeSpawnedBot(entry);
+        }
+        after(randMs(30_000, 31_000), () -> BotChatManager.checkBotStatus(entry, bot));
+        return entry;
+    }
+
+    private void normalizeSpawnedBot(BotEntry entry) {
+        Character bot = entry.bot;
+        Point spawnPos = resolveSpawnPosition(bot.getMap(), bot.getPosition());
+        if (bot.getHp() <= 0) {
+            bot.updateHp(Math.max(1, bot.getCurrentMaxHp()));
+        }
+
+        BotPhysicsEngine.teleportTo(entry, bot, spawnPos != null ? spawnPos : bot.getPosition());
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        entry.deadUntil = 0;
+        entry.lastMapId = bot.getMapId();
+        entry.skipDelayMs = 0;
+        entry.aiTickAccumulatorMs = 0;
+        entry.moveDir = 0;
+        entry.movementBroadcastValid = false;
+        if (entry.owner != null) {
+            joinBotToOwnerParty(entry.owner, bot);
+        }
+    }
+
+    /** Start the single periodic nav-graph eviction sweep (idempotent). Called on bot registration so
+     *  TimerManager is guaranteed up; the AtomicBoolean caps it to one task for the server's lifetime. */
+    private void maybeStartGraphEvictionSweep() {
+        if (graphEvictionStarted.compareAndSet(false, true)) {
+            TimerManager.getInstance().register(this::sweepIdleGraphs, GRAPH_EVICT_SWEEP_MS);
+        }
+    }
+
+    /** Grace before an entry-less online bot character counts as a zombie (covers spawn/register
+     *  and register-replace windows). */
+    private static final long ZOMBIE_GRACE_MS = 90_000L;
+    private final ConcurrentHashMap<Integer, Long> zombieSuspectSinceMs = new ConcurrentHashMap<>();
+
+    /**
+     * Zombie sweep: a character online with a BotClient but NO registry entry receives no ticks —
+     * it can never move, respond to commands, or log itself out, and it displays as a phantom
+     * "companion" in the roster. Observed sources: a disconnect whose world-removal gate
+     * (isLoggedin/getClient) didn't run after cleanupBotRuntimeState already dropped the entry,
+     * the tickCore map-null guard, and the 3-strike tick-failure disable. Whatever the leak path,
+     * self-heal here: after a grace window, force the character out of the world.
+     */
+    private void sweepZombieBotCharacters() {
+        long now = System.currentTimeMillis();
+        java.util.Set<Integer> onlineBotIds = new java.util.HashSet<>();
+        for (net.server.world.World w : net.server.Server.getInstance().getWorlds()) {
+            for (net.server.channel.Channel ch : net.server.Server.getInstance().getChannelsFromWorld(w.getId())) {
+                for (Character chr : ch.getPlayerStorage().getAllCharacters()) {
+                    if (!(chr.getClient() instanceof BotClient)) {
+                        continue;
+                    }
+                    int id = chr.getId();
+                    onlineBotIds.add(id);
+                    if (getEntryByBotCharId(id) != null || spawningBotIds.contains(id)) {
+                        zombieSuspectSinceMs.remove(id);
+                        continue;
+                    }
+                    Long since = zombieSuspectSinceMs.putIfAbsent(id, now);
+                    if (since == null || now - since < ZOMBIE_GRACE_MS) {
+                        continue;
+                    }
+                    zombieSuspectSinceMs.remove(id);
+                    log.warn("Zombie bot character '{}' (id {}, map {}): online with no registry entry - evicting from world",
+                            chr.getName(), id, chr.getMapId());
+                    evictZombieBotCharacter(w, ch, chr);
+                }
+            }
+        }
+        // A suspect can disconnect normally during its grace window and disappear from every storage.
+        // Without pruning, those one-shot IDs accumulate for the process lifetime.
+        zombieSuspectSinceMs.keySet().removeIf(id -> !onlineBotIds.contains(id));
+    }
+
+    private static void evictZombieBotCharacter(net.server.world.World w, net.server.channel.Channel ch, Character chr) {
+        try {
+            if (chr.getClient() != null) {
+                chr.getClient().forceDisconnect(); // full teardown when the Client's one-shot latch is unused
+            }
+        } catch (Exception e) {
+            log.warn("Zombie eviction: forceDisconnect threw for '{}'", chr.getName(), e);
+        }
+        // The zombie-creating disconnect attempt may already have consumed the Client's one-shot
+        // 'disconnecting' latch (making forceDisconnect a no-op) — pull the character out directly.
+        if (ch.getPlayerStorage().getCharacterById(chr.getId()) != null) {
+            try {
+                if (chr.getMap() != null) {
+                    chr.getMap().removePlayer(chr);
+                }
+                ch.removePlayer(chr);
+                w.removePlayer(chr);
+                chr.logOff();
+                log.info("Zombie bot character '{}' evicted via direct world removal", chr.getName());
+            } catch (Exception e) {
+                log.error("Zombie eviction failed for '{}'", chr.getName(), e);
+            }
+        }
+    }
+
+    /** Ghost suspects by INSTANCE (identity, not charId — the same character can be legitimately
+     *  online again as a new instance while its old one lingers). Guarded by its own monitor. */
+    private final java.util.Map<Character, Long> ghostSuspectSinceMs =
+            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+
+    /**
+     * Ghost sweep: a disconnect racing a map change can leave the character's old instance inside a
+     * map's object list after it left player storage. Once its 5-min disposal timer nulls the
+     * inventory, every subsequent addPlayer on that map NPEs while serializing the ghost's equips —
+     * the map is poisoned and every bot spawned into it becomes a zombie. Self-heal: purge any
+     * PLAYER map object whose instance is no longer the one in channel player storage, after a grace
+     * window so a character mid-login/transition is never touched.
+     */
+    private void sweepGhostPlayerObjects() {
+        long now = System.currentTimeMillis();
+        java.util.Set<Character> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (net.server.world.World w : net.server.Server.getInstance().getWorlds()) {
+            for (net.server.channel.Channel ch : net.server.Server.getInstance().getChannelsFromWorld(w.getId())) {
+                for (MapleMap map : ch.getMapFactory().getMaps().values()) {
+                    for (Character chr : map.getAllPlayers()) {
+                        if (ch.getPlayerStorage().getCharacterById(chr.getId()) == chr) {
+                            continue; // the live instance, right where it belongs
+                        }
+                        seen.add(chr);
+                        Long since = ghostSuspectSinceMs.putIfAbsent(chr, now);
+                        if (since == null || now - since < ZOMBIE_GRACE_MS) {
+                            continue;
+                        }
+                        ghostSuspectSinceMs.remove(chr);
+                        log.warn("Ghost player object '{}' (id {}) purged from map {} - stale instance left behind by a disconnect race",
+                                chr.getName(), chr.getId(), map.getId());
+                        map.removeStalePlayer(chr);
+                    }
+                }
+            }
+        }
+        ghostSuspectSinceMs.keySet().removeIf(chr -> !seen.contains(chr));
+    }
+
+    /** Evict in-memory nav graphs for maps no bot is in or traveling to, capping bot heap growth. */
+    private void sweepIdleGraphs() {
+        sweepZombieBotCharacters();
+        sweepGhostPlayerObjects();
+        java.util.Set<Integer> activeMapIds = new java.util.HashSet<>();
+        for (BotEntry e : botsByCharId.values()) {
+            if (e.bot != null) {
+                activeMapIds.add(e.bot.getMapId());
+            }
+            if (e.autopilotMapId != -1) {
+                activeMapIds.add(e.autopilotMapId);
+            }
+        }
+        int evicted = BotNavigationGraphProvider.evictIdleGraphs(activeMapIds, GRAPH_EVICT_GRACE_MS);
+        if (evicted > 0) {
+            log.debug("Evicted {} idle bot nav graph(s); {}", evicted, BotNavigationGraphProvider.cacheStats());
+        }
+    }
+
+    public void removeBot(int ownerCharId) {
+        List<BotEntry> entries = bots.remove(ownerCharId);
+        if (entries != null) {
+            for (BotEntry entry : entries) {
+                cancelBotTask(entry);
+                unindexBotEntry(entry);
+            }
+        }
+        ownerFormations.remove(ownerCharId);
+        townClusterAnchors.remove(ownerCharId);
+    }
+
+    /** Cancel and remove a bot by the bot character's own ID (used during shutdown/disconnect). */
+    public boolean removeBotByCharId(int botCharId) {
+        // Reasonless legacy entry point: attach the caller's stack so any unregistration path we
+        // haven't tagged yet self-identifies in the log (zombie-bot root-cause tracing).
+        return removeBotByCharId(botCharId, null);
+    }
+
+    /** As {@link #removeBotByCharId(int)}, with the removal reason recorded in the log — entry
+     *  removal without a matching world removal produces an untickable zombie character, so every
+     *  removal must be attributable (see sweepZombieBotCharacters). */
+    public boolean removeBotByCharId(int botCharId, String reason) {
+        boolean removed = false;
+        for (Map.Entry<Integer, List<BotEntry>> ownerEntry : bots.entrySet()) {
+            List<BotEntry> entries = ownerEntry.getValue();
+            boolean removedFromOwner = entries.removeIf(e -> {
+                if (e.bot.getId() == botCharId) {
+                    cancelBotTask(e);
+                    unindexBotEntry(e);
+                    BotShoutTradeManager.forget(botCharId); // drop any pending shout-deal awaiting this bot
+                    BotMarketShoutBus.getInstance().dropSpeaker(botCharId); // and its live shouts
+                    return true;
+                }
+                return false;
+            });
+            if (removedFromOwner) {
+                removed = true;
+                if (entries.isEmpty() && bots.remove(ownerEntry.getKey(), entries)) {
+                    ownerFormations.remove(ownerEntry.getKey());
+                    townClusterAnchors.remove(ownerEntry.getKey());
+                }
+            }
+        }
+        if (removed) {
+            if (reason != null) {
+                if (BotLogConfig.cfg.ENTRY_REMOVED) {
+                    log.info("Bot entry removed for charId {} ({})", botCharId, reason);
+                }
+            } else {
+                log.info("Bot entry removed for charId {} (untagged path)", botCharId,
+                        new Exception("unregister stack"));
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * Hard-disconnect every currently-online bot (managed population bots AND owned companions): cancel
+     * each bot's tick and drop its world session immediately. Returns how many were disconnected. Does
+     * NOT delete anything — the characters stay in the DB and can be respawned/rescheduled. Unlike the
+     * scheduler's graceful linger logout this is instant, for an admin "clear the world now". Note: if
+     * the population scheduler is still enabled, the next sweep will respawn managed bots toward target.
+     */
+    public int disconnectAllBots() {
+        List<Character> online = new ArrayList<>();
+        for (List<BotEntry> entries : bots.values()) {
+            for (BotEntry e : entries) {
+                if (e.bot != null) {
+                    online.add(e.bot);
+                }
+            }
+        }
+        for (Character bot : online) {
+            removeBotByCharId(bot.getId(), "admin disconnect-all"); // cancel tick + drop the entry
+            if (bot.getClient() != null) {
+                // forceDisconnect saves + leaves the world SYNCHRONOUSLY (on this thread), one bot at a
+                // time. The async disconnect() instead fans every bot's saveCharToDB across ThreadManager,
+                // and those concurrent DELETE+INSERTs on the shared item tables deadlock in InnoDB. This
+                // is the admin "clear the world now" hard path, so serial is fine.
+                bot.getClient().forceDisconnect();
+            }
+        }
+        return online.size();
+    }
+
+    /**
+     * Spawn a managed (server-generated) bot self-owned into the population world/channel, with no
+     * requester — used by {@link BotScheduler}. Guards against double-spawning a bot that is already
+     * live or online as a player. Mirrors {@link #spawnOwnerlessBot} minus the requester context.
+     */
+    public boolean spawnManagedBot(int charId) {
+        if (getEntryByBotCharId(charId) != null) {
+            return false; // already a live bot
+        }
+        // Atomic claim: overlapping fast-start sweeps run on separate TimerManager workers and would
+        // otherwise both pass the check above and double-load/register the same character. The loser bails.
+        if (!spawningBotIds.add(charId)) {
+            return false; // another thread is already bringing this exact bot online
+        }
+        try {
+            if (getEntryByBotCharId(charId) != null) {
+                return false; // raced in just after our first check — now claimed, recheck and bail
+            }
+            int world = cfg.POPULATION_WORLD;
+            int channel = cfg.POPULATION_CHANNEL;
+            var worldServer = Server.getInstance().getWorld(world);
+            if (worldServer == null) {
+                return false;
+            }
+            if (worldServer.getPlayerStorage().getCharacterById(charId) != null) {
+                return false; // online already (as a player or bot) — never double-load
+            }
+            Character botChar = loadOfflineBot(charId, world, channel);
+            BotEntry entry = registerSpawnedBot(charId, botChar, botChar); // self-owned: owner == bot
+            ManagedBotService.ManagedBot mb = ManagedBotService.getInstance().get(charId);
+            entry.crewGroupId = mb != null ? mb.groupId() : null; // crewmates share like an owned party
+            entry.selfScrollEnabled = true; // population bots self-scroll their own gear (gated to town-breaks)
+            startTakeoverAutopilot(entry, botChar);
+            ManagedBotService.getInstance().touchOnline(charId);
+            return true;
+        } catch (SQLException | RuntimeException e) {
+            // RuntimeException too: a single unspawnable bot (e.g. its saved map rejecting addPlayer)
+            // must fail just this spawn, not abort the scheduler's whole population sweep.
+            log.warn("spawnManagedBot: failed to load charId={}", charId, e);
+            return false;
+        } finally {
+            spawningBotIds.remove(charId);
+        }
+    }
+
+    /** Human-like goodbye lines for a managed bot logging off (US-ASCII). Picked only when the bot's
+     *  chattiness rolls in — a quiet bot just slips away. */
+    private static final List<String> LOGOUT_GOODBYE_MSGS = List.of(
+            "gtg", "gtg cya", "gtg ty", "ty cya", "cya", "cya all", "cya guys", "ttyl", "ttyl all",
+            "ok im out", "alright im out", "im out", "heading off", "heading off for the night",
+            "logging off", "time to log", "calling it for tonight", "calling it", "thats it for me",
+            "im done for now", "gg", "gg all", "ty for the grind", "ty all gl", "thanks all, gl",
+            "had fun, cya", "see ya around", "later", "later all", "peace", "gn", "gn all", "off i go");
+
+    /**
+     * Graceful scheduled logout of a live managed bot: instead of vanishing on the spot, it arms a
+     * 0-5 min "linger" deadline. The autopilot tick's logout branch ({@link #tickLogout}) retreats the
+     * bot to a safe town, stands it at a random spot, and only then ({@link #finishLoggingOut}) says
+     * goodbye, leaves the party, and disconnects — so the bot never disappears mid-dungeon and town hubs
+     * feel populated. Idempotent — the {@code loggingOut} guard stops a later sweep from re-arming it.
+     */
+    public void logoutManagedBot(int charId) {
+        BotEntry entry = getEntryByBotCharId(charId);
+        if (entry == null || entry.bot == null || entry.loggingOut || entry.operatorCmd != null) {
+            return;
+        }
+        entry.loggingOut = true;
+        entry.logoutLingerUntilMs = System.currentTimeMillis() + randMs(0, 5 * 60_000);
+        entry.logoutAnchor = null;
+        entry.logoutDisconnecting = false;
+    }
+
+    /**
+     * Logout-linger tick branch (runs while {@code loggingOut}, before the normal grind flow): retreat to
+     * a safe town and stand at a random spot until the linger deadline, then hand off to
+     * {@link #finishLoggingOut}. Loiters with the live {@code runAiTick} (like every other loiter caller)
+     * so the bot can actually navigate to its chosen town anchor — even one a portal/jump away. The
+     * loiter's opportunity-attack is a no-op here because this branch only runs once the bot is in a safe
+     * (monster-free) town; a forced {@code runAiTick=false} would block all edge execution and leave a bot
+     * with a cross-region anchor stuck in place until the linger deadline.
+     */
+    private void tickLogout(BotEntry entry, Character bot, Point botPos, boolean runAiTick) {
+        BotChairManager.standIfSeated(bot); // don't walk to a logout spot / warp while parked in a chair
+        if (System.currentTimeMillis() >= entry.logoutLingerUntilMs) {
+            finishLoggingOut(entry, bot);
+            return;
+        }
+        MapleMap map = bot.getMap();
+        // Still in a non-town map, or a town map with live monsters, and with a town to return to:
+        // return-scroll / warp there first.
+        if (shouldRetreatToReturnMap(map)) {
+            clearMode(entry);
+            entry.grindTarget = null;
+            entry.degenAttackDone = false;
+            BotPhysicsEngine.idleOnGround(entry, bot);
+            if (!tryUseReturnScroll(bot)) {
+                bot.changeMap(map.getReturnMap());
+            }
+            groundAfterMapChange(entry, bot);
+            entry.logoutAnchor = null; // re-pick a spot in the destination town
+            return;
+        }
+        // In a safe map: walk to a random nearby spot once, then idle there until the deadline.
+        if (entry.logoutAnchor == null) {
+            entry.logoutAnchor = resolveIdleSpot(entry, bot, botPos);
+            BotMovementManager.resetEntryState(entry);
+        }
+        loiterAtAnchor(entry, bot, botPos, entry.logoutAnchor, runAiTick);
+    }
+
+    /**
+     * One-shot town loiter spot: snapshot a RANDOM nearby anchor (a town NPC or another character) and
+     * de-stack onto a reachable, ground-snapped foothold near it via the shared NPC-approach SSOT
+     * ({@link BotTravelManager#pickReachableApproachPoint}), so idling bots cluster around NPCs/each
+     * other and look alive instead of stacking on the spawn portal. The anchor is snapshotted once
+     * (never a live reference) -- if it was a player who then moves, the bot stays put, no chasing.
+     * Falls back to a sideways spread when no anchor/foothold fits.
+     */
+    private Point pickTownLoiterAnchor(BotEntry entry, Character bot, Point botPos) {
+        MapleMap map = bot.getMap();
+        List<Point> anchors = new ArrayList<>();
+        if (map != null) {
+            for (server.maps.MapObject npc : map.getMapObjectsInRange(new Point(0, 0),
+                    Double.POSITIVE_INFINITY, java.util.List.of(server.maps.MapObjectType.NPC))) {
+                anchors.add(npc.getPosition());
+            }
+            for (Character c : map.getAllPlayers()) {
+                if (c != bot) {
+                    anchors.add(c.getPosition());
+                }
+            }
+        }
+        if (!anchors.isEmpty()) {
+            Point anchor = anchors.get(ThreadLocalRandom.current().nextInt(anchors.size()));
+            return BotTravelManager.pickReachableApproachPoint(entry, bot, anchor,
+                    BotTravelManager.APPROACH_SPREAD_PX);
+        }
+        // No NPCs/characters to cluster on: keep the old sideways spread so bots still don't stack.
+        int spread = (150 + ThreadLocalRandom.current().nextInt(551))
+                * (ThreadLocalRandom.current().nextBoolean() ? 1 : -1);
+        return new Point(botPos.x + spread, botPos.y);
+    }
+
+    /** Say goodbye (chattiness-gated), leave the party, and disconnect after a short human-like beat.
+     *  Guarded by {@code logoutDisconnecting} so the per-tick logout branch only fires it once. */
+    private void finishLoggingOut(BotEntry entry, Character bot) {
+        if (entry.logoutDisconnecting) {
+            return;
+        }
+        entry.logoutDisconnecting = true;
+        BotPersonality p = entry.personality != null ? entry.personality : BotPersonality.defaults();
+        if (ThreadLocalRandom.current().nextDouble() < p.chattiness()) {
+            botSayParty(bot, randomReply(LOGOUT_GOODBYE_MSGS));
+        }
+        net.server.world.Party party = bot.getParty();
+        if (party != null && bot.getClient() != null) {
+            net.server.world.Party.leaveParty(party, bot.getClient());
+        }
+        after(randMs(3_000, 8_000), () -> finishManagedLogout(bot));
+    }
+
+    private void finishManagedLogout(Character bot) {
+        // disconnect() persists the char (Client.saveCharToDB in its finally) — no explicit pre-save.
+        if (bot.getClient() != null) {
+            bot.getClient().disconnect(false, false);
+        }
+    }
+
+    /** Release bot-owned runtime state before this character leaves bot control. */
+    public boolean cleanupBotRuntimeState(Character bot) {
+        if (bot == null) {
+            return false;
+        }
+
+        boolean removed = removeBotByCharId(bot.getId(), "disconnect/takeover cleanup");
+        clearBotOnlyAutopotState(bot);
+        return removed;
+    }
+
+    private void cancelBotTask(BotEntry entry) {
+        if (entry != null && entry.task != null) {
+            entry.task.cancel(false);
+        }
+    }
+
+    /** Snapshot of every registered bot entry (world farm-rate sampling, economy reset). */
+    List<BotEntry> allBotEntries() {
+        return new ArrayList<>(botsByCharId.values());
+    }
+
+    private void indexBotEntry(BotEntry entry) {
+        if (entry != null && entry.bot != null) {
+            botsByCharId.put(entry.bot.getId(), entry);
+        }
+    }
+
+    private void unindexBotEntry(BotEntry entry) {
+        if (entry != null && entry.bot != null) {
+            botsByCharId.remove(entry.bot.getId(), entry);
+        }
+    }
+
+    private static void clearBotOnlyAutopotState(Character bot) {
+        bot.setAutopotHpAlert(0f);
+        bot.setAutopotMpAlert(0f);
+        normalizeAutopotKey(bot, 91);
+        normalizeAutopotKey(bot, 92);
+    }
+
+    private static void normalizeAutopotKey(Character bot, int key) {
+        KeyBinding binding = bot.getKeymap().get(key);
+        if (binding != null && binding.getType() != 7 && binding.getAction() > 0) {
+            bot.changeKeybinding(key, new KeyBinding(7, binding.getAction()));
+        }
+    }
+
+    /** Disown a bot by name - cancels its AI tick and leaves it idle in the map. */
+    public boolean dismissBot(int ownerCharId, String botName) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries == null) return false;
+        BotEntry entry = getBotEntry(ownerCharId, botName);
+        if (entry == null) return false;
+        entries.remove(entry);
+        cancelBotTask(entry);
+        unindexBotEntry(entry);
+        issueStop(entry);
+        after(randMs(400, 600), () ->
+                botReply(entry, randomReply(List.of(
+                        "ok", "sure", "alright", "gotcha",
+                        "later!", "see ya", "take care", "cya", "peace out"))));
+        return true;
+    }
+
+    /** Recruit an ownerless bot by name into the owner's group. Returns an error string on failure, null on success. */
+    public String recruitBot(int ownerCharId, Character owner, String botName) {
+        Character bot = findOwnerlessBot(botName, owner.getWorld());
+        if (bot == null) return "No ownerless bot named '" + botName + "' found.";
+
+        BotOwnershipService.AuthorizationResult auth =
+                BotOwnershipService.getInstance().ensureCanControl(
+                        owner,
+                        new BotOwnershipService.ResolvedCharacter(
+                                bot.getId(),
+                                bot.getName(),
+                                bot.getAccountID(),
+                                bot));
+        if (!auth.allowed()) {
+            return auth.failureMessage();
+        }
+
+        registerSpawnedBot(ownerCharId, owner, bot);
+        return null;
+    }
+
+    /** Transfer a bot from this owner to another player in the same map. Returns an error string on failure, null on success. */
+    public String giveBot(int ownerCharId, Character owner, String botName, String targetName) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries == null) return "You have no bots.";
+        BotEntry found = getBotEntry(ownerCharId, botName);
+        if (found == null) return "No bot named '" + botName + "' in your group.";
+
+        // Find target player in the same map
+        Character target = owner.getMap().getCharacterByName(targetName);
+        if (target == null) return "Player '" + targetName + "' not found in this map.";
+        if (target.getId() == ownerCharId) return "That's you.";
+
+        BotOwnershipService.AuthorizationResult auth =
+                BotOwnershipService.getInstance().ensureCanControl(
+                        target,
+                        new BotOwnershipService.ResolvedCharacter(
+                                found.bot.getId(),
+                                found.bot.getName(),
+                                found.bot.getAccountID(),
+                                found.bot));
+        if (!auth.allowed()) {
+            return auth.failureMessage();
+        }
+
+        // Disown from current owner
+        Character bot = found.bot;
+        entries.remove(found);
+        cancelBotTask(found);
+        unindexBotEntry(found);
+        issueStop(found);
+
+        // Register under new owner
+        registerBot(target.getId(), target, bot);
+        after(randMs(700, 900), () ->
+                botSay(bot, randomReply(List.of("ok!", "sure!", "hey " + target.getName() + "!", "hi " + target.getName() + "!"))));
+        return null;
+    }
+
+    public Character getActiveOwnerByBotCharId(int botCharId) {
+        BotEntry entry = getEntryByBotCharId(botCharId);
+        return entry != null ? entry.owner : null;
+    }
+
+    BotEntry getEntryByBotCharId(int botCharId) {
+        return botsByCharId.get(botCharId);
+    }
+
+    /** Trade-window chat reaches a headless bot here (single hook in {@link server.Trade#chat}):
+     *  haggle positions are spoken as plain lines with a meso token, and a bot can't read the
+     *  packet its fake client was sent. No-op when the listener isn't a registered bot. */
+    public static void onTradeChat(Character listener, Character speaker, String message) {
+        BotEntry entry = getInstance().getEntryByBotCharId(listener.getId());
+        if (entry != null) {
+            BotShoutTradeManager.onTradeChat(entry, speaker, message);
+        }
+    }
+
+    /**
+     * Registered bot entries for every online bot in {@code anyMember}'s game party, in
+     * party-member order (deterministic across members). Empty when not in a party. The
+     * game party is the source of truth for party autopilot: @botme bots own themselves,
+     * so the per-owner registry can't enumerate a mixed group.
+     */
+    /** Admin debug: one status line per spawned bot on {@code mapId} (any owner, including
+     *  ownerless/independent), using the same first-person status the bot answers "where are you"
+     *  with - for a private system-message listing, sorted by name. */
+    public List<String> mapBotStatusLines(int mapId) {
+        List<String> lines = new ArrayList<>();
+        for (List<BotEntry> entries : bots.values()) {
+            for (BotEntry entry : entries) {
+                Character bot = entry.bot;
+                if (bot == null || bot.getMapId() != mapId) {
+                    continue;
+                }
+                String job = bot.getJob() == null ? "?" : bot.getJob().toString();
+                lines.add(bot.getName() + " [" + job + " lv" + bot.getLevel() + "]: "
+                        + BotAutopilotManager.statusReport(entry, bot)
+                        + personalityTag(entry)
+                        + " | hp " + bot.getHp() + "/" + bot.getMaxHp() + " meso " + bot.getMeso());
+            }
+        }
+        lines.sort(String.CASE_INSENSITIVE_ORDER);
+        return lines;
+    }
+
+    /** Compact personality readout for @botstatus: archetype + the behavior traits that shape what the
+     *  bot does (sociability, chattiness, risk, farm-vs-idle) + mean session length. Empty when no
+     *  profile (shouldn't happen — defaults() is assigned at spawn). */
+    private static String personalityTag(BotEntry entry) {
+        BotPersonality p = entry.personality;
+        if (p == null) {
+            return "";
+        }
+        return String.format(java.util.Locale.ROOT,
+                " | %s soc=%.1f cha=%.1f rsk=%.1f frm=%.1f sess=%dm",
+                p.career(), p.sociability(), p.chattiness(), p.riskTolerance(),
+                p.farmIdleRatio(), p.sessionLenMeanMin());
+    }
+
+    List<BotEntry> partyBotEntries(Character anyMember) {
+        if (anyMember == null || anyMember.getParty() == null) {
+            return List.of();
+        }
+        List<BotEntry> out = new ArrayList<>();
+        for (Character member : anyMember.getPartyMembersOnline()) {
+            if (member == null || !(member.getClient() instanceof BotClient)) {
+                continue;
+            }
+            BotEntry entry = getEntryByBotCharId(member.getId());
+            if (entry != null) {
+                out.add(entry);
+            }
+        }
+        return out;
+    }
+
+    /** The bots to (re)start together when ANY one of them receives the party-autopilot command:
+     *  the live game party (which spans owners — @botparty bots each self-own), or the receiving
+     *  bot's owner's own bots when there is no game party. Deliberately does NOT filter on
+     *  {@code autopilotParty}, so a member just reset by "follow" rejoins the group instead of being
+     *  planned around — that omission was the party-desync bug. */
+    List<BotEntry> partyAutopilotCohort(BotEntry anyMember) {
+        if (anyMember == null || anyMember.bot == null) {
+            return List.of();
+        }
+        List<BotEntry> party = partyBotEntries(anyMember.bot);
+        if (!party.isEmpty()) {
+            return party;
+        }
+        Character owner = anyMember.owner;
+        if (owner != null) {
+            List<BotEntry> own = getBotEntries(owner.getId());
+            if (own != null && !own.isEmpty()) {
+                return List.copyOf(own);
+            }
+        }
+        return List.of(anyMember);
+    }
+
+    public void requestBotPotionCheckSoon(Character bot) {
+        if (bot == null || !(bot.getClient() instanceof BotClient)) {
+            return;
+        }
+        Character owner = getActiveOwnerByBotCharId(bot.getId());
+        if (owner == null) {
+            return;
+        }
+        BotEntry entry = getBotEntry(owner.getId(), bot.getId());
+        if (entry == null) {
+            return;
+        }
+        int soonDelayMs = Math.max(0, cfg.POT_CHECK_RETRY_SOON_MS);
+        if (entry.potCheckTimerMs <= 0 || entry.potCheckTimerMs > soonDelayMs) {
+            entry.potCheckTimerMs = soonDelayMs;
+        }
+    }
+
+    /** Finds a bot-client character with the given name that is not currently owned by anyone. */
+    private Character findOwnerlessBot(String name, int world) {
+        for (var ch : Server.getInstance().getWorld(world).getChannels()) {
+            Character c = ch.getPlayerStorage().getCharacterByName(name);
+            if (c == null || !(c.getClient() instanceof BotClient)) continue;
+            if (getActiveOwnerByBotCharId(c.getId()) == null) return c;
+        }
+        return null;
+    }
+
+    public Character getBot(int ownerCharId) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        return (entries != null && !entries.isEmpty()) ? entries.get(0).bot : null;
+    }
+
+    BotEntry getFirstBotEntry(int ownerCharId) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        return (entries != null && !entries.isEmpty()) ? entries.get(0) : null;
+    }
+
+    List<BotEntry> getBotEntries(int ownerCharId) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries == null || entries.isEmpty()) {
+            return List.of();
+        }
+        return List.copyOf(entries);
+    }
+
+    /** Same-map, online crewmates of {@code bot} (same {@code managed_bot.group_id}), excluding itself.
+     *  Empty when the bot isn't crewed — the SSOT for "who is in my crew right now". A crew shares gear/
+     *  ammo/supplies like an owned party; soloists/dynamic-party bots have no crew, so they never trade. */
+    List<BotEntry> crewMatesOnMap(Character bot) {
+        if (bot == null) {
+            return List.of();
+        }
+        BotEntry self = getEntryByBotCharId(bot.getId());
+        Integer gid = self != null ? self.crewGroupId : null;
+        if (gid == null || bot.getMap() == null) {
+            return List.of();
+        }
+        List<BotEntry> out = new ArrayList<>();
+        for (Character c : bot.getMap().getAllPlayers()) {
+            if (c == bot || !(c.getClient() instanceof BotClient)) {
+                continue;
+            }
+            BotEntry e = getEntryByBotCharId(c.getId());
+            if (e != null && gid.equals(e.crewGroupId)) {
+                out.add(e);
+            }
+        }
+        return out;
+    }
+
+    /** Chat report for the "crew" command: the bot's crewmates (or that it's a soloist) plus its current
+     *  party status. Crew = same {@code crewGroupId} (SSOT, see {@link #crewMatesOnMap}); ASCII only. */
+    String crewReport(BotEntry entry) {
+        Character bot = entry == null ? null : entry.bot;
+        if (bot == null) {
+            return "not sure who i am rn";
+        }
+        StringBuilder sb = new StringBuilder();
+        Integer gid = entry.crewGroupId;
+        if (gid == null) {
+            sb.append("im a solo player, no crew");
+        } else {
+            List<String> mates = new ArrayList<>();
+            for (BotEntry e : allEntries()) {
+                if (e != entry && gid.equals(e.crewGroupId) && e.bot != null) {
+                    mates.add(e.bot.getName());
+                }
+            }
+            sb.append(mates.isEmpty()
+                    ? "im in a crew but no crewmates are online rn"
+                    : "my crew: " + String.join(", ", mates));
+        }
+        net.server.world.Party party = bot.getParty();
+        if (party == null) {
+            sb.append("; not in a party");
+        } else {
+            boolean leader = party.getLeaderId() == bot.getId();
+            sb.append("; in a party of ").append(party.getMembers().size())
+                    .append(leader ? " (im the leader)" : "");
+        }
+        return sb.toString();
+    }
+
+    /** Supply/gear share candidates for {@code needyEntry}: the owner's stable (by {@code ownerId}) PLUS,
+     *  for a self-owned CREW bot, its same-map crewmates. SSOT used by the potion/ammo share donor picks
+     *  so crews share like an owned party while solo/dynamic bots (owner stable = just themselves) don't. */
+    List<BotEntry> shareCandidateEntries(int ownerId, BotEntry needyEntry) {
+        List<BotEntry> out = new ArrayList<>(getBotEntries(ownerId));
+        if (needyEntry != null && needyEntry.crewGroupId != null && needyEntry.bot != null) {
+            for (BotEntry ce : crewMatesOnMap(needyEntry.bot)) {
+                if (!out.contains(ce)) {
+                    out.add(ce);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Console/admin: read-only snapshot of every registered bot entry across all owners. */
+    List<BotEntry> allEntries() {
+        List<BotEntry> all = new ArrayList<>();
+        for (List<BotEntry> entries : bots.values()) {
+            all.addAll(entries);
+        }
+        return all;
+    }
+
+    /** Called when the owner picks up or receives an item; notifies bots that might want it. */
+    public void notifyOwnerGainedItem(Character owner, Item item) {
+        if (owner == null || item == null) return;
+        if (ItemConstants.getInventoryType(item.getItemId()) != InventoryType.EQUIP) return;
+        List<BotEntry> entries = getBotEntries(owner.getId());
+        if (entries.isEmpty()) return;
+        // Run the per-bot upgrade-recommendation scan off the player's pickup thread. The
+        // scan is fire-and-forget (its only effect is a possible chat-prompt) so deferring
+        // by one timer tick keeps rapid pickups from stalling the player behind K×N DPs.
+        after(0L, () -> {
+            for (BotEntry entry : entries) {
+                BotOfferManager.notifyOwnerGainedEquip(entry, entry.bot, item);
+            }
+        });
+    }
+
+    /** Called when a trade recipient receives an item; skips circular own-bot trade scans. */
+    public void notifyOwnerGainedTradeItem(Character recipient, Item item, Character source) {
+        if (isItemFromOwnedBot(recipient, source)) {
+            return;
+        }
+        notifyOwnerGainedItem(recipient, item);
+    }
+
+    /**
+     * A hired-merchant stall sold something (any owner species — player stalls are market signal
+     * too): append to the living-economy tape, count the fee as a meso sink, and let bot
+     * participants' price books learn the clearing. Best-effort — must never break a sale.
+     * The sold item itself is passed so equips band by their rolled quality (design sec 3).
+     */
+    public void notifyStallSale(int ownerId, Character buyer, Item sold, int units, long paidTotal, int mapId) {
+        try {
+            int itemId = sold.getItemId();
+            int band = BotFreeMarketManager.bandOf(sold);
+            long unitPrice = units > 0 ? Math.max(1, paidTotal / units) : paidTotal;
+            BotMarketLedger.getInstance().append(BotMarketLedger.EventKind.STALL_SALE, itemId, band,
+                    Math.max(1, units), unitPrice, ownerId, buyer != null ? buyer.getId() : null, mapId);
+            BotMarketLedger.getInstance().recordFlow("trade-tax", server.Trade.getFee(paidTotal), false);
+            long now = System.currentTimeMillis();
+            long key = BotMarketMath.priceKey(itemId, band);
+            BotEntry seller = getEntryByBotCharId(ownerId);
+            if (seller != null && seller.bot != null) {
+                BotMarketBook.of(seller, seller.bot).observe(key, unitPrice, BotMarketMath.W_TRADE, now);
+                if (BotFreeMarketManager.recordSaleOutcome(seller, key, now)) {
+                    BotMarketLedger.getInstance().append(BotMarketLedger.EventKind.SOLD_FAST,
+                            itemId, band, Math.max(1, units), unitPrice, ownerId,
+                            buyer != null ? buyer.getId() : null, mapId);
+                }
+            }
+            if (buyer != null) {
+                BotEntry buyerEntry = getEntryByBotCharId(buyer.getId());
+                if (buyerEntry != null && buyerEntry.bot != null) {
+                    BotMarketBook.of(buyerEntry, buyerEntry.bot).observe(key, unitPrice, BotMarketMath.W_TRADE, now);
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("notifyStallSale bookkeeping failed for item {}: {}",
+                    sold != null ? sold.getItemId() : -1, e.toString());
+        }
+    }
+
+    private boolean isItemFromOwnedBot(Character owner, Character source) {
+        if (owner == null || source == null || !(source.getClient() instanceof BotClient)) {
+            return false;
+        }
+        Character activeOwner = getActiveOwnerByBotCharId(source.getId());
+        return activeOwner != null && activeOwner.getId() == owner.getId();
+    }
+
+    public void notifyNearbyBotsOfScroll(Character source,
+                                         client.inventory.Equip.ScrollResult result,
+                                         int scrollItemId,
+                                         long delayMs) {
+        after(Math.max(0L, delayMs), () ->
+                BotScrollReactionManager.handleScrollEvent(source, result, scrollItemId, bots.values()));
+    }
+
+    BotEntry getBotEntry(int ownerCharId, String botName) {
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries == null || botName == null) {
+            return null;
+        }
+
+        for (BotEntry entry : entries) {
+            if (entry.bot.getName().equalsIgnoreCase(botName)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    /** Any spawned bot by name across ALL owners - for GM debug tooling (e.g. !botnav pathlog on
+     *  ownerless / independent bots), not the ownership-scoped command paths. Null if none. */
+    BotEntry findSpawnedBotByName(String botName) {
+        if (botName == null) {
+            return null;
+        }
+        for (List<BotEntry> entries : bots.values()) {
+            for (BotEntry entry : entries) {
+                if (entry.bot != null && entry.bot.getName().equalsIgnoreCase(botName)) {
+                    return entry;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Live count of spawned bots across all owners - for debug profiling that wants the current
+     *  registry load (e.g. "grind profile" reports decision cost vs concurrent bot-tick threads). */
+    int activeBotCount() {
+        int n = 0;
+        for (List<BotEntry> entries : bots.values()) {
+            n += entries.size();
+        }
+        return n;
+    }
+
+    public void syncPartyBotsQuestStart(Character source, Quest quest, int npc) {
+        if (quest == null) {
+            return;
+        }
+
+        for (Character bot : getPartyBots(source)) {
+            if (bot.getQuest(quest).getStatus() == QuestStatus.Status.STARTED) {
+                continue;
+            }
+            quest.forceStartWithActions(bot, resolveQuestNpc(source, quest, npc));
+        }
+    }
+
+    public void syncPartyBotsQuestProgress(Character source, int questId, int infoNumber, String progress) {
+        if (progress == null) {
+            return;
+        }
+
+        Quest quest = Quest.getInstance(questId);
+        int npc = resolveQuestNpc(source, quest, source.getQuest(quest).getNpc());
+        for (Character bot : getPartyBots(source)) {
+            ensureQuestStarted(bot, quest, npc);
+            bot.setQuestProgress(questId, infoNumber, progress);
+        }
+    }
+
+    public void syncPartyBotsQuestComplete(Character source, Quest quest, int npc, Integer selection) {
+        if (quest == null) {
+            return;
+        }
+
+        int resolvedNpc = resolveQuestNpc(source, quest, npc);
+        for (Character bot : getPartyBots(source)) {
+            ensureQuestStarted(bot, quest, resolvedNpc);
+            quest.forceCompleteWithActions(bot, resolvedNpc, selection);
+        }
+    }
+
+    public String manualTradeGreeting() {
+        return randomReply(List.of(
+                "?",
+                "got something for me?",
+                "what you got?",
+                "trade?",
+                "show me",
+                "lets see",
+                "whatcha got",
+                "tryna trade?",
+                "yes?",
+                "sup",
+                "ooh what is it",
+                "what's up"));
+    }
+
+    private List<Character> getPartyBots(Character source) {
+        if (source == null || source.getParty() == null || source.getClient() instanceof BotClient) {
+            return List.of();
+        }
+
+        List<Character> partyBots = new ArrayList<>();
+        for (Character member : source.getPartyMembersOnline()) {
+            if (member == null || member.getId() == source.getId()) {
+                continue;
+            }
+            if (member.getClient() instanceof BotClient) {
+                partyBots.add(member);
+            }
+        }
+        return partyBots;
+    }
+
+    private void ensureQuestStarted(Character bot, Quest quest, int npc) {
+        if (bot.getQuest(quest).getStatus() == QuestStatus.Status.STARTED) {
+            return;
+        }
+
+        quest.forceStartWithActions(bot, npc);
+    }
+
+    private int resolveQuestNpc(Character source, Quest quest, int fallbackNpc) {
+        if (fallbackNpc > 0) {
+            return fallbackNpc;
+        }
+
+        if (source != null) {
+            int sourceNpc = source.getQuest(quest).getNpc();
+            if (sourceNpc > 0) {
+                return sourceNpc;
+            }
+        }
+
+        return constants.id.NpcId.MAPLE_ADMINISTRATOR;
+    }
+
+    /** lt/rb half-extent (px) of the box around a speaker that an open-world "hi"/"sup" reaches. */
+    private static final int PROXIMITY_CHAT_RADIUS = 300;
+
+    /**
+     * Open-world social: a greeting/status query spoken in map chat by ANY player reaches every self-owned
+     * MANAGED bot inside a {@value #PROXIMITY_CHAT_RADIUS}px box around the speaker. Whitelist:
+     * <ul>
+     *   <li><b>greeting ("hi") / status ("sup"/"where are you")</b> — answered for everyone;</li>
+     *   <li><b>read-only info (pots/inventory/ammo/stats/...)</b> — answered only for a GM; a non-GM
+     *       stranger gets brushed off ({@link BotChatManager#refuseInfoQuery}).</li>
+     * </ul>
+     * Reuses {@link BotChatManager#handleChat} so the reply logic stays SSOT. Companions (owner != bot)
+     * are skipped: they answer their own owner via the broadcast path, not strangers.
+     */
+    private void maybeHandleProximityChat(Character speaker, String message, ReplyChannel channel) {
+        if (channel != ReplyChannel.MAP || speaker == null || speaker.getMap() == null
+                || speaker.getClient() instanceof BotClient) {
+            return;
+        }
+        boolean basic = BotChatManager.isGreeting(message) || BotChatManager.isLocationStatusQuery(message);
+        boolean info = !basic && BotChatManager.isReadOnlyInfoQuery(message);
+        if (!basic && !info) {
+            return;
+        }
+        boolean answer = basic || speaker.isGM(); // info queries: GM only, else refuse
+        Point sp = speaker.getPosition();
+        Rectangle box = new Rectangle(sp.x - PROXIMITY_CHAT_RADIUS, sp.y - PROXIMITY_CHAT_RADIUS,
+                2 * PROXIMITY_CHAT_RADIUS, 2 * PROXIMITY_CHAT_RADIUS);
+        for (Character c : speaker.getMap().getAllPlayers()) {
+            if (c == speaker || !(c.getClient() instanceof BotClient) || !box.contains(c.getPosition())) {
+                continue;
+            }
+            BotEntry e = getEntryByBotCharId(c.getId());
+            if (e == null || !(e.owner == null || e.owner == c)) {
+                continue; // managed/self-owned only; companions answer their owner, not passers-by
+            }
+            e.replyChannel = ReplyChannel.MAP;
+            if (answer) {
+                BotChatManager.handleChat(e, message);
+            } else {
+                BotChatManager.refuseInfoQuery(e);
+            }
+        }
+    }
+
+    public void handleChat(Character owner, String message, ReplyChannel channel) {
+        if (handlePendingLootOfferResponse(owner, message)) {
+            return;
+        }
+
+        // Market shout (S>/B>/PC>): parse and post to the map's shout bus so nearby bots can match
+        // it (design 8.4). The chat line itself was already broadcast by the general-chat handler;
+        // a well-formed shout is consumed here, a malformed one falls through to normal handling.
+        if (channel == ReplyChannel.MAP && BotMarketGrammar.looksLikeShout(message)) {
+            BotMarketGrammar.Offer offer = BotMarketGrammar.parse(message);
+            if (offer != null) {
+                BotMarketShoutBus.getInstance().publish(owner.getMapId(), owner.getId(), offer,
+                        System.currentTimeMillis());
+                return;
+            }
+        }
+
+        // Recruit must work even when owner has no bots yet
+        Matcher rm = RECRUIT_PATTERN.matcher(message);
+        if (rm.find()) {
+            String name = rm.group(2);
+            String err = recruitBot(owner.getId(), owner, name);
+            if (err == null) {
+                owner.yellowMessage("Bot '" + name + "' recruited!");
+            } else {
+                owner.yellowMessage(err);
+            }
+            return;
+        }
+
+        BotCommandParser.BotTransferCommand transferCommand = BotCommandParser.matchBotTransferCommand(message);
+        if (transferCommand != null) {
+            String err = giveBot(owner.getId(), owner, transferCommand.botName(), transferCommand.targetName());
+            if (err != null) owner.yellowMessage(err);
+            else owner.yellowMessage("Bot '" + transferCommand.botName() + "' transferred to " + transferCommand.targetName() + ".");
+            return;
+        }
+
+        // Formation command
+        Matcher fm = FORMATION_PATTERN.matcher(message);
+        if (fm.find()) {
+            String typeStr = fm.group(1);
+            List<BotEntry> fEntries = bots.get(owner.getId());
+            if (typeStr == null) {
+                String help = "formations: stagger/split/random/spread/left/right <px>, stack, tight, loose | snap <px/on/off>";
+                if (fEntries != null && !fEntries.isEmpty()) BotChatManager.queueBotReply(fEntries.get(0), help);
+                else owner.yellowMessage(help);
+                return;
+            }
+            FormationState current = ownerFormations.getOrDefault(owner.getId(), FormationState.defaultStagger());
+            // snap [px|on|off] — changes Y-snap range, preserves type/px
+            if (typeStr.equalsIgnoreCase("snap")) {
+                String qualifier = fm.group(2);
+                int newSnapRange;
+                if (qualifier == null) {
+                    String status = current.snapRange() > 0 ? "on (" + current.snapRange() + "px)" : "off";
+                    if (fEntries != null && !fEntries.isEmpty()) BotChatManager.queueBotReply(fEntries.get(0), "snap: " + status);
+                    else owner.yellowMessage("snap: " + status);
+                    return;
+                } else if (qualifier.equalsIgnoreCase("off")) {
+                    newSnapRange = 0;
+                } else if (qualifier.equalsIgnoreCase("on")) {
+                    newSnapRange = current.snapRange() > 0 ? current.snapRange() : BotMovementManager.cfg.FOLLOW_Y_CAP;
+                } else {
+                    newSnapRange = Integer.parseInt(qualifier);
+                }
+                FormationState fs = new FormationState(current.type(), current.px(), newSnapRange);
+                ownerFormations.put(owner.getId(), fs);
+                String status = newSnapRange > 0 ? "on (" + newSnapRange + "px)" : "off";
+                if (fEntries != null && !fEntries.isEmpty())
+                    BotChatManager.queueBotReply(fEntries.get(0), "snap: " + status);
+                return;
+            }
+            String pxToken = fm.group(2);
+            int defaultPx = pxToken == null                      ? cfg.FOLLOW_STAGGER
+                          : pxToken.equalsIgnoreCase("tight")    ? 30
+                          : pxToken.equalsIgnoreCase("loose")    ? 120
+                          : pxToken.equalsIgnoreCase("on")
+                            || pxToken.equalsIgnoreCase("off")   ? cfg.FOLLOW_STAGGER
+                          : Integer.parseInt(pxToken);
+            FormationType type;
+            int px = defaultPx;
+            switch (typeStr.toLowerCase()) {
+                case "tight"          -> { type = FormationType.STAGGER; px = 30; }
+                case "loose"          -> { type = FormationType.STAGGER; px = 120; }
+                case "stack"          -> { type = FormationType.STACK;   px = 0; }
+                case "spread"         -> { type = FormationType.SPREAD;  px = defaultPx; }
+                case "left"           -> { type = FormationType.LEFT;    px = defaultPx; }
+                case "right"          -> { type = FormationType.RIGHT;   px = defaultPx; }
+                case "random"         -> { type = FormationType.RANDOM;  px = defaultPx; }
+                case "split","stagger"-> { type = FormationType.STAGGER; px = defaultPx; }
+                default               -> { type = FormationType.STAGGER; px = defaultPx; }
+            }
+            FormationState fs = new FormationState(type, px, current.snapRange());
+            ownerFormations.put(owner.getId(), fs);
+            if (fEntries != null) {
+                for (int i = 0; i < fEntries.size(); i++) fEntries.get(i).followOffsetX = fs.offsetFor(i, fEntries.size());
+                if (!fEntries.isEmpty()) {
+                    String label = typeStr.toLowerCase() + (px > 0 ? " " + px + "px" : "");
+                    BotChatManager.queueBotReply(fEntries.get(0), "formation: " + label);
+                }
+            }
+            return;
+        }
+
+        // ADMIN DEBUG ROUTING: a gm6 admin may name-target ANY spawned bot - including bots they
+        // don't own and independent/self-owned bots - to interact with and debug it. Only
+        // name-targeted commands cross the ownership boundary (bare broadcasts stay owner-scoped),
+        // and the admin's OWN bots are excluded here so they keep the existing owner path below.
+        // Placed before the own-bots fetch so an admin who owns zero bots can still command foreign
+        // ones.
+        if (owner.gmLevel() >= 6) {
+            BotCommandParser.TargetedBotMatch foreignMatch = resolveForeignAdminTarget(owner, message);
+            BotEntry foreign = foreignMatch.entry();
+            if (foreign != null) {
+                bindDebugCommander(foreign, owner);
+                foreign.replyChannel = channel;
+                if (foreignMatch.commandText() != null) {
+                    // Only an explicit follow command transfers the follow dependency to the admin;
+                    // every other interaction (e.g. "where ru") just replies, leaving the bot's task.
+                    if (BotChatManager.isFollowCommand(foreignMatch.commandText())) {
+                        foreign.debugCommanderFollow = true;
+                    }
+                    BotChatManager.handleChat(foreign, foreignMatch.commandText());
+                    if (foreign.debugCommanderFollow) {
+                        // Self-owned bots are each their own owner, so the per-owner formation loop
+                        // never staggers them — assign slots across the GM's whole follow cohort here
+                        // so multiple followed bots fan out instead of stacking on one point.
+                        assignDebugFollowFormation(owner.getId());
+                    }
+                }
+                return;
+            }
+        }
+
+        // NON-OWNER SOCIAL: a nearby player who doesn't own the bot can still ask a self-owned bot to
+        // party ("pt"/"party") or answer its Flow-1 "wanna party?" with a "yes". Placed before the
+        // owner-scoped fetch below so it reaches map-local self-owned bots; these keywords aren't owner
+        // commands, so owner routing is undisturbed.
+        if (BotSocialManager.maybeHandlePartyChat(owner, message)) {
+            return;
+        }
+
+        // OPEN-WORLD SOCIAL: a "hi" or "sup" from ANY player reaches every nearby self-owned managed
+        // bot, not just the speaker's companions. Non-consuming — the speaker's OWN companions still
+        // answer through the owner broadcast below.
+        maybeHandleProximityChat(owner, message, channel);
+
+        List<BotEntry> entries = bots.get(owner.getId());
+        if (entries == null || entries.isEmpty()) return;
+
+        // Dismiss: disown bot, leaves it idle in map
+        Matcher dm = DISMISS_PATTERN.matcher(message);
+        if (dm.find()) {
+            String name = dm.group(2);
+            if (dismissBot(owner.getId(), name)) {
+                owner.yellowMessage("Bot '" + name + "' disowned - now idle.");
+            } else {
+                owner.yellowMessage("No bot named '" + name + "' in your group.");
+            }
+            return;
+        }
+
+        // Name-prefix routing: "Jason pots?" → only Jason responds
+        BotCommandParser.TargetedBotMatch targetedBot = BotCommandParser.resolveTargetedBot(entries, message);
+        if (targetedBot.entry() != null) {
+            String followTargetToken = BotChatManager.matchFollowTarget(targetedBot.commandText());
+            if (followTargetToken != null) {
+                applyFollowTargetCommand(owner, List.of(targetedBot.entry()), followTargetToken);
+                return;
+            }
+            clearDebugCommander(targetedBot.entry()); // real owner commands -> owner wins
+            targetedBot.entry().replyChannel = channel;
+            String cmd = targetedBot.commandText();
+            if (server.bots.llm.BotLlmConfig.typoSuggesterEnabled) {
+                String typo = server.bots.llm.CommandTypoSuggester.suggest(cmd);
+                if (typo != null) {
+                    BotChatManager.queueBotReply(targetedBot.entry(), "did you mean '" + typo + "'?");
+                    return;
+                }
+            }
+            BotChatManager.handleChat(targetedBot.entry(), cmd);
+            boolean matched = BotChatManager.wasLastChatHandled();
+            if (matched && targetedBot.entry().getOwner() != null
+                    && owner.getId() == targetedBot.entry().getOwner().getId()) {
+                targetedBot.entry().lastOwnerCommand = cmd;
+                targetedBot.entry().lastOwnerCommandAtMs = System.currentTimeMillis();
+            }
+            // Fall through to LLM only if no command pattern matched.
+            if (server.bots.llm.BotLlmConfig.enabled && !matched) {
+                server.bots.llm.BotLlmReplyManager.maybeRespond(targetedBot.entry(), owner, cmd);
+            }
+            return;
+        }
+        if (targetedBot.feedbackMessage() != null) {
+            owner.yellowMessage(targetedBot.feedbackMessage());
+            return;
+        }
+
+        String followTargetToken = BotChatManager.matchFollowTarget(message);
+        if (followTargetToken != null) {
+            applyFollowTargetCommand(owner, entries, followTargetToken);
+            return;
+        }
+
+        // Party autopilot ("go grind together"): ONE shared decision for the whole group.
+        // Broadcasting would have every bot plan its own trip and scatter.
+        if (BotChatManager.isPartyAutopilotCommand(message)) {
+            List<BotEntry> cohort = partyAutopilotCohort(entries.get(0));
+            for (BotEntry e : cohort) {
+                e.replyChannel = channel;
+            }
+            after(randMs(900, 1600), () -> {
+                for (BotEntry e : cohort) {
+                    BotChatManager.prepareActiveModeEntry(e);
+                }
+                BotAutopilotManager.startParty(owner, cohort);
+            });
+            return;
+        }
+
+        // Party-wide "goto <map>" (no name prefix): the whole cohort travels there together (movement-group
+        // cohort: leader routes, co-located members formation-follow) and stays. Like the party-autopilot
+        // case, intercept BEFORE the broadcast so it's ONE shared group action, not N independent trips.
+        if (BotChatManager.isGotoCommand(message)) {
+            List<BotEntry> cohort = partyAutopilotCohort(entries.get(0));
+            for (BotEntry e : cohort) {
+                e.replyChannel = channel;
+            }
+            BotChatManager.handlePartyGoto(owner, cohort, BotChatManager.matchGotoArgs(message));
+            return;
+        }
+
+        // Group supply requests ("need pots", "anyone have hp pots", "need arrows"
+        // etc.) elicit a single response from the bot group. Broadcasting these
+        // would have every bot run handleNeedPotionCommand independently, each
+        // selecting the same best-stocked donor → duplicate offer messages and
+        // duplicate trade requests to the owner.
+        if (BotChatManager.isGroupSupplyRequest(message)) {
+            BotEntry responder = pickGroupSupplyResponder(owner, entries);
+            if (responder != null) {
+                clearDebugCommander(responder); // real owner commands -> owner wins
+                responder.replyChannel = channel;
+                BotChatManager.handleChat(responder, message);
+            }
+            return;
+        }
+
+        // No name prefix — typo-suggest once via the first bot, otherwise broadcast.
+        if (server.bots.llm.BotLlmConfig.typoSuggesterEnabled) {
+            String typo = server.bots.llm.CommandTypoSuggester.suggest(message);
+            if (typo != null) {
+                BotEntry first = entries.get(0);
+                first.replyChannel = channel;
+                BotChatManager.queueBotReply(first, "did you mean '" + typo + "'?");
+                return;
+            }
+        }
+        for (BotEntry entry : entries) {
+            clearDebugCommander(entry); // real owner commands -> owner wins
+            entry.replyChannel = channel;
+            BotChatManager.handleChat(entry, message);
+        }
+    }
+
+    /** Prefer a bot in the owner's current map so its reply/trade is visible. */
+    private static BotEntry pickGroupSupplyResponder(Character owner, List<BotEntry> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return null;
+        }
+        int ownerMapId = owner != null ? owner.getMapId() : -1;
+        for (BotEntry entry : entries) {
+            if (entry.bot != null && entry.bot.getMapId() == ownerMapId) {
+                return entry;
+            }
+        }
+        return entries.get(0);
+    }
+
+    private boolean handlePendingLootOfferResponse(Character speaker, String message) {
+        List<BotEntry> matches = new ArrayList<>();
+        for (List<BotEntry> entries : bots.values()) {
+            for (BotEntry entry : entries) {
+                BotOfferManager.expirePendingOffer(entry);
+                if (!isPendingLootOfferTarget(entry, speaker)) {
+                    continue;
+                }
+
+                matches.add(entry);
+            }
+        }
+
+        BotCommandParser.TargetedBotMatch targetedBot = BotCommandParser.resolveTargetedBot(matches, message);
+        if (targetedBot.entry() != null) {
+            return BotOfferManager.handlePendingOfferResponse(targetedBot.entry(), speaker, targetedBot.commandText());
+        }
+        if (targetedBot.feedbackMessage() != null) {
+            speaker.dropMessage(5, targetedBot.feedbackMessage());
+            return true;
+        }
+
+        if (matches.size() == 1) {
+            return BotOfferManager.handlePendingOfferResponse(matches.get(0), speaker, message);
+        }
+        if (matches.size() > 1 && looksLikeConfirmation(message)) {
+            speaker.dropMessage(5, "More than one bot is waiting on you. Say '<botname> yes' or '<slot> yes'.");
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean isPendingLootOfferTarget(BotEntry entry, Character speaker) {
+        return entry != null
+                && BotOfferManager.hasPendingOffer(entry)
+                && entry.pendingLootOfferRecipientId == speaker.getId()
+                && entry.bot.getMapId() == speaker.getMapId();
+    }
+
+    private boolean looksLikeConfirmation(String message) {
+        String normalized = message.trim().toLowerCase();
+        return normalized.matches(".*\\b(yes|yep|yeah|yea|y|ok|sure|confirm|no|nope|nah|nvm|never\\s*mind|dont|don't|not\\s+now|skip)\\b.*");
+    }
+
+    // -------------------------------------------------------------------------
+    /**
+     * Resolve the follow target by sweeping for a real platform at followBase.x within
+     * snapRange pixels of ownerPos.y. If a platform exists there, the bot may stand on
+     * a platform different from the owner's (formation spread). If no platform is found
+     * within range, or snap is disabled, fall back to the owner's foothold with X clamped
+     * so the bot never targets a position that isn't on a real standing surface.
+     * If the owner is on a rope, target the rope region instead of searching for ground platforms.
+     */
+    private static Point resolveFollowTargetPos(Point followBase,
+                                                Character owner,
+                                                Point ownerPos,
+                                                int snapRange,
+                                                MapleMap map) {
+        if (owner != null && CharacterStance.isClimbing(owner.getStance()) && map != null) {
+            return clampedOnOwnerRegion(followBase.x, owner, ownerPos, map);
+        }
+
+        if (snapRange > 0 && map != null) {
+            Point below = BotPhysicsEngine.findGroundPoint(map, followBase);
+            Point above = BotPhysicsEngine.findGroundPoint(map, new Point(followBase.x, ownerPos.y - snapRange));
+            boolean belowOk = below != null && Math.abs(below.y - ownerPos.y) <= snapRange;
+            boolean aboveOk = above != null && Math.abs(above.y - ownerPos.y) <= snapRange;
+            if (belowOk || aboveOk) {
+                if (!belowOk) return above;
+                if (!aboveOk) return below;
+                return Math.abs(below.y - ownerPos.y) <= Math.abs(above.y - ownerPos.y) ? below : above;
+            }
+        }
+        // Swim maps: when owner is themselves swimming (mid-water) and no
+        // platform is within snapRange, target the raw owner position so the
+        // bot swims up to mid-water. If owner is grounded on a platform but
+        // we couldn't snap-match it (e.g. very tall stack), keep the normal
+        // clampedOnOwnerRegion behaviour — bot should land on a real floor,
+        // not hover in water under a grounded owner.
+        if (map != null && map.isSwim()
+                && owner != null && CharacterStance.isSwimming(owner.getStance())) {
+            return new Point(followBase.x, ownerPos.y);
+        }
+        return clampedOnOwnerRegion(followBase.x, owner, ownerPos, map);
+    }
+
+    /**
+     * Clamps targetX to the owner's current walk region and returns a real standing point.
+     * Falls back to the owner's foothold segment if the region cannot be resolved.
+     * For rope targets, finds the nearest rope to the formation target position.
+     */
+    private static Point clampedOnOwnerRegion(int targetX, Character owner, Point ownerPos, MapleMap map) {
+        if (map != null) {
+            BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map);
+            if (graph != null) {
+                int ownerRegionId = owner != null
+                        ? BotNavigationManager.resolveCharacterRegionId(graph, map, owner)
+                        : graph.findRegionId(map, ownerPos);
+                BotNavigationGraph.Region ownerRegion = graph.getRegion(ownerRegionId);
+                if (ownerRegion != null) {
+                    if (ownerRegion.isRopeRegion) {
+                        // Find nearest rope at the post-formation offset position.
+                        // If no rope is nearby, fall back to the owner's own rope so
+                        // the bot still climbs up to follow rather than standing
+                        // on the platform below.
+                        BotNavigationGraph.Region nearestRope = findNearestRopeAtY(graph, targetX, ownerPos.y);
+                        if (nearestRope == null) {
+                            nearestRope = ownerRegion;
+                        }
+                        return new Point(nearestRope.minX, ownerPos.y);
+                    } else {
+                        // Inset by a small margin so the bot doesn't aim at the
+                        // exact platform edge — owner's hit-region extends past
+                        // the foothold endpoints, but the bot needs a real
+                        // standing surface under its feet, and the integrator
+                        // routinely overshoots edges by 1-2 px in swim maps.
+                        int edgeMargin = PLATFORM_EDGE_INSET_PX;
+                        int minX = ownerRegion.minX;
+                        int maxX = ownerRegion.maxX;
+                        if (maxX - minX > 2 * edgeMargin) {
+                            minX += edgeMargin;
+                            maxX -= edgeMargin;
+                        }
+                        int clampedX = Math.max(minX, Math.min(maxX, targetX));
+                        return ownerRegion.pointAt(clampedX);
+                    }
+                }
+            }
+        }
+
+        Foothold ownerFh = BotPhysicsEngine.findGroundFoothold(map, ownerPos);
+        if (ownerFh != null) {
+            int x1 = Math.min(ownerFh.getX1(), ownerFh.getX2());
+            int x2 = Math.max(ownerFh.getX1(), ownerFh.getX2());
+            targetX = Math.max(x1, Math.min(x2, targetX));
+        }
+        Point fallback = map == null ? null : BotPhysicsEngine.findGroundPoint(map, new Point(targetX, ownerPos.y));
+        return fallback != null ? fallback : new Point(targetX, ownerPos.y);
+    }
+
+    /**
+     * Finds the rope region nearest to the target position (targetX, targetY).
+     * Returns null if no rope region is found within reasonable distance.
+     */
+    private static BotNavigationGraph.Region findNearestRopeAtY(BotNavigationGraph graph, int targetX, int targetY) {
+        BotNavigationGraph.Region nearestRope = null;
+        int nearestDistance = Integer.MAX_VALUE;
+        int maxDistance = 400;
+
+        for (BotNavigationGraph.Region region : graph.regions) {
+            if (region.isRopeRegion) {
+                if (region.minY > targetY || region.maxY < targetY) {
+                    continue;
+                }
+                int ropeX = region.minX;
+                int distance = Math.abs(ropeX - targetX);
+                if (distance < nearestDistance && distance <= maxDistance) {
+                    nearestDistance = distance;
+                    nearestRope = region;
+                }
+            }
+        }
+
+        return nearestRope;
+    }
+
+    FormationState formationStateFor(BotEntry entry) {
+        Character owner = entry.owner;
+        if (owner == null) {
+            return FormationState.defaultStagger();
+        }
+        return ownerFormations.getOrDefault(owner.getId(), FormationState.defaultStagger());
+    }
+
+    // Admin-debug commander binding: a gm6 admin commanding a foreign/independent bot temporarily
+    // makes the bot interact with the admin instead of its real owner. ~5 min window, refreshed by
+    // each admin command.
+    static final long DEBUG_COMMANDER_TTL_MS = 5 * 60_000L;
+
+    private static boolean isDebugCommanderFresh(BotEntry entry) {
+        return entry != null && entry.debugCommanderId > 0
+                && System.currentTimeMillis() < entry.debugCommanderUntilMs;
+    }
+
+    /** An admin has hijacked this bot to follow them and the binding is still fresh. While true the
+     *  bot is the admin's to drive: autopilot self-heal must not yank it back. The TTL-lapse handler
+     *  in tickEntry drops the binding and resumes autopilot once this goes stale. */
+    static boolean isAdminFollowActive(BotEntry entry) {
+        return entry != null && entry.debugCommanderFollow && isDebugCommanderFresh(entry);
+    }
+
+    /** The bot's owner is itself a bot: an @botparty/@botme owner that botified in place, so its
+     *  companions now have a bot for an "owner" and no live human is supervising them. SSOT for the
+     *  intermediate state — treat these like self-owned managed bots (RTS-commandable + eligible for the
+     *  inert-autopilot self-heal) until the owner reclaims (client flips back to a real Client). Without
+     *  this a botified owner's companions linger mis-classified as companions-of-a-logged-in-player. */
+    static boolean ownerIsBot(BotEntry entry) {
+        return entry != null && entry.owner != null && entry.owner != entry.bot
+                && entry.owner.getClient() instanceof BotClient;
+    }
+
+    /** A self-driving managed bot: ownerless population bot, a self-owned takeover (owner == bot),
+     *  or a companion whose owner botified ({@link #ownerIsBot}). The creation-time ownership flag
+     *  keeps an offline human-owned companion distinct after its live owner reference becomes null.
+     *  SSOT for "self-owned" across the inert-autopilot self-heal and the web RTS-commandable check. */
+    static boolean isSelfDrivingBot(BotEntry entry) {
+        return entry != null
+                && (entry.selfDrivingOwnership || ownerIsBot(entry));
+    }
+
+    /** A REAL player's character running on autopilot with no live human present: the char a player
+     *  put on autopilot via @botme/@botparty (explicit {@code commandAutopilot} flag), or a companion
+     *  swept along when its owner botified ({@link #ownerIsBot}, which auto-reverts on reclaim). This is
+     *  NOT any self-owned bot — disposable population/botpop bots are ALSO {@code owner==bot}, so the
+     *  flag (not ownership) is the SSOT. These run the player's real gear & meso with no human present,
+     *  so they stay grind-focused: no breaks/gacha/chill/FM/auto-scroll, only grind + grind-essential
+     *  resupply/sell. */
+    static boolean isRealPlayerTakeover(BotEntry entry) {
+        return entry != null && (entry.commandAutopilot || ownerIsBot(entry));
+    }
+
+    static void bindDebugCommander(BotEntry entry, Character commander) {
+        if (entry == null || commander == null) {
+            return;
+        }
+        entry.debugCommanderId = commander.getId();
+        entry.debugCommanderUntilMs = System.currentTimeMillis() + DEBUG_COMMANDER_TTL_MS;
+    }
+
+    static void clearDebugCommander(BotEntry entry) {
+        if (entry != null) {
+            int formerGm = entry.debugCommanderId;
+            boolean wasFollowing = entry.debugCommanderFollow;
+            entry.debugCommanderId = 0;
+            entry.debugCommanderUntilMs = 0L;
+            entry.debugCommanderFollow = false;
+            if (wasFollowing && formerGm > 0) {
+                entry.followOffsetX = 0;                       // drop this bot's debug-follow formation slot
+                getInstance().assignDebugFollowFormation(formerGm); // re-stagger the bots still following
+            }
+        }
+    }
+
+    /** Stagger the GM's debug-commander follow cohort so multiple followed bots fan out instead of
+     *  stacking on one point when several foreign bots follow the same GM. */
+    private void assignDebugFollowFormation(int gmCharId) {
+        List<BotEntry> cohort = new ArrayList<>();
+        for (List<BotEntry> entries : bots.values()) {
+            for (BotEntry e : entries) {
+                if (e.debugCommanderFollow && e.debugCommanderId == gmCharId
+                        && isDebugCommanderFresh(e) && e.bot != null) {
+                    cohort.add(e);
+                }
+            }
+        }
+        cohort.sort((a, b) -> Integer.compare(a.bot.getId(), b.bot.getId()));
+        FormationState fs = FormationState.defaultStagger();
+        for (int i = 0; i < cohort.size(); i++) {
+            cohort.get(i).followOffsetX = fs.offsetFor(i, cohort.size());
+        }
+    }
+
+    void activateDebugFollowFormation(BotEntry entry) {
+        if (entry == null || !isDebugCommanderFresh(entry)) {
+            return;
+        }
+        entry.debugCommanderFollow = true;
+        assignDebugFollowFormation(entry.debugCommanderId);
+    }
+
+    /** The bound admin commander while the binding is fresh, else null. Resolved world-wide (not just
+     *  the bot's current map) so a followed bot keeps its anchor — and can travel cross-map to catch up —
+     *  when the admin changes maps. */
+    Character resolveDebugCommander(BotEntry entry) {
+        if (!isDebugCommanderFresh(entry) || entry.bot == null) {
+            return null;
+        }
+        var ws = entry.bot.getWorldServer();
+        return ws != null ? ws.getPlayerStorage().getCharacterById(entry.debugCommanderId) : null;
+    }
+
+    /** Who command-driven interactions (trade-with-owner, follow) should target: the fresh admin
+     *  commander if bound and resolvable, else the real owner. */
+    Character commanderOrOwner(BotEntry entry) {
+        Character commander = resolveDebugCommander(entry);
+        return commander != null ? commander : entry.owner;
+    }
+
+    /**
+     * Resolve a foreign spawned bot a gm6 admin name-targeted. "Foreign" = any spawned bot whose
+     * real owner is not the speaker (includes independent/self-owned bots and autopilot bots with
+     * offline owners). Name matches only — numeric slot targets keep their own-bot-list meaning.
+     * The returned match has a null entry when the message is not name-targeted at a foreign bot
+     * (the speaker's own bots keep the existing owner path).
+     */
+    BotCommandParser.TargetedBotMatch resolveForeignAdminTarget(Character speaker, String message) {
+        if (speaker == null) {
+            return new BotCommandParser.TargetedBotMatch(null, null, null);
+        }
+        int speakerId = speaker.getId();
+        List<BotEntry> foreign = new ArrayList<>();
+        for (List<BotEntry> ownerEntries : bots.values()) {
+            for (BotEntry entry : ownerEntries) {
+                Character entryOwner = entry.owner;
+                if (entryOwner == null || entryOwner.getId() != speakerId) {
+                    foreign.add(entry);
+                }
+            }
+        }
+        return BotCommandParser.resolveTargetedBotByName(foreign, message);
+    }
+
+    /** True when the bot plays independently of its owner: autopilot is running, or it is a
+     *  self-owned (@botme) bot whose owner is itself. Such bots must never anchor to the owner. */
+    static boolean isAutopilotActive(BotEntry entry) {
+        return BotAutopilotManager.isActive(entry)
+                || (entry != null && entry.owner != null && entry.owner == entry.bot);
+    }
+
+    /** Whether an emergency may legally fall back to walking to the owner: only when the bot is
+     *  not playing independently, has a real owner that is not itself, and that owner is online
+     *  in this world (so its position is live, not a stale logged-off snapshot). */
+    static boolean canWalkToOwner(BotEntry entry) {
+        return entry != null && !isAutopilotActive(entry) && hasOnlinePlayerOwner(entry);
+    }
+
+    /** A real, online, non-self owner the bot can anchor to. Unlike {@link #canWalkToOwner} this
+     *  does NOT exclude autopilot bots — milestone/abort callers need the raw owner-online fact to
+     *  decide follow-the-player vs go-to-town while the bot is still in autopilot. */
+    static boolean hasOnlinePlayerOwner(BotEntry entry) {
+        Character owner = entry == null ? null : entry.owner;
+        return owner != null && owner != entry.bot && owner.isLoggedinWorld();
+    }
+
+    /**
+     * An autopilot bot hit a 1st/2nd-job milestone that needs an owner decision: leave the party
+     * cohort individually and wait. If a real player owner is online, follow them (handy for the
+     * decision); otherwise park safely in the nearest town via the owner-inactive SSOT. Does not
+     * advance the job. Both paths clear autopilot (clearMode), so the bot drops out of the cohort.
+     */
+    void parkAutopilotForJobDecision(BotEntry entry) {
+        if (entry == null || entry.bot == null || entry.bot.getMap() == null) {
+            return;
+        }
+        if (hasOnlinePlayerOwner(entry)) {
+            issueFollowOwner(entry);
+        } else {
+            enterOwnerInactiveSafeMode(entry, entry.bot, entry.ownerCharId,
+                    shouldTownWarpForOwnerInactive(entry));
+        }
+    }
+
+    Character resolveFollowAnchor(BotEntry entry, Character owner) {
+        // Follow the admin ONLY when they issued an explicit follow command - a debug binding from a
+        // mere status interaction must not transfer the bot's follow dependency off its leader.
+        Character commander = resolveDebugCommander(entry);
+        if (commander != null && entry.debugCommanderFollow) {
+            return commander;
+        }
+        if (owner == null) {
+            return null;
+        }
+
+        // Explicit follow target (transit-follow leader, @follow <name>): resolve it among the
+        // live game party and sibling bots FIRST, before the self-owned guard below. A self-owned
+        // (@botparty) bot has owner == entry.bot, so the guard would otherwise return null and
+        // strand it with no anchor the instant the leader steps through a portal. Resolving the
+        // leader here lets syncFollowMap legally walk/route the bot across maps to catch up.
+        int targetId = entry.followTargetId;
+        if (targetId > 0 && targetId != entry.bot.getId() && targetId != owner.getId()) {
+            if (owner.getParty() != null) {
+                for (Character member : owner.getPartyMembersOnline()) {
+                    if (member != null && member.getId() == targetId && member.isLoggedinWorld()) {
+                        return member;
+                    }
+                }
+            }
+            for (BotEntry sibling : getBotEntries(owner.getId())) {
+                if (sibling.bot != null && sibling.bot.getId() == targetId && sibling.bot.isLoggedinWorld()) {
+                    return sibling.bot;
+                }
+            }
+        }
+
+        // Self-owned (@botme) bot: anchoring to itself makes the formation offset oscillate the
+        // bot around its own position. No anchor — the commander check above still wins when set.
+        if (owner == entry.bot) {
+            return null;
+        }
+
+        return owner;
+    }
+
+    void setFormationState(Character owner, FormationType type, int px, int snapRange, List<BotEntry> entries) {
+        if (owner == null) {
+            return;
+        }
+
+        FormationState formation = new FormationState(type, px, snapRange);
+        ownerFormations.put(owner.getId(), formation);
+        if (entries == null) {
+            return;
+        }
+
+        for (int i = 0; i < entries.size(); i++) {
+            entries.get(i).followOffsetX = formation.offsetFor(i, entries.size());
+        }
+    }
+
+    TargetSnapshot captureTargetSnapshot(BotEntry entry) {
+        Character bot = entry.bot;
+        Character owner = entry.owner;
+        Character followAnchor = resolveFollowAnchor(entry, owner);
+        Point fallbackPos = bot.getPosition();
+        Point rawOwnerPos = owner != null ? owner.getPosition() : fallbackPos;
+        Point rawFollowAnchorPos = followAnchor != null ? followAnchor.getPosition() : rawOwnerPos;
+        String followAnchorName = followAnchor != null ? followAnchor.getName() : "owner";
+        FormationState formation = formationStateFor(entry);
+        Point followBasePos = new Point(rawFollowAnchorPos.x + entry.followOffsetX, rawFollowAnchorPos.y);
+        Point followTargetPos = resolveFollowTargetPos(followBasePos, followAnchor, rawFollowAnchorPos, formation.snapRange(), bot.getMap());
+        Point rawShopTargetPos = entry.shopVisitPending
+                ? (entry.shopTargetPos != null ? entry.shopTargetPos : entry.shopNpcPos)
+                : null;
+        Point shopTargetPos = rawShopTargetPos == null ? null : new Point(rawShopTargetPos);
+        Point moveTargetPos = entry.moveTarget == null ? null : new Point(entry.moveTarget);
+        Point farmAnchorPos = entry.farmAnchor == null || entry.farmAnchorMapId != bot.getMapId()
+                ? null
+                : new Point(entry.farmAnchor);
+        Monster activeGrindTarget = entry.grindTarget != null
+                && entry.grindTarget.isAlive()
+                && entry.grindTarget.getMap() == bot.getMap()
+                ? entry.grindTarget
+                : null;
+        Point grindTargetPos = activeGrindTarget == null ? null : new Point(activeGrindTarget.getPosition());
+        Point primaryTargetPos;
+        String primaryTargetSource;
+        if (shopTargetPos != null) {
+            primaryTargetPos = shopTargetPos;
+            primaryTargetSource = "shop-target";
+        } else if (moveTargetPos != null) {
+            primaryTargetPos = moveTargetPos;
+            primaryTargetSource = "move-target";
+        } else if (farmAnchorPos != null) {
+            primaryTargetPos = farmAnchorPos;
+            primaryTargetSource = "farm-anchor";
+        } else if (grindTargetPos != null) {
+            primaryTargetPos = grindTargetPos;
+            primaryTargetSource = "grind-target";
+        } else if (entry.grinding) {
+            primaryTargetPos = resolveNoGrindTargetPosition(entry, fallbackPos, bot.getMap());
+            primaryTargetSource = "grind-wander";
+        } else if (entry.following) {
+            primaryTargetPos = followTargetPos;
+            primaryTargetSource = "follow-target";
+        } else if (isAutopilotActive(entry)) {
+            // Safety net: an autopilot / self-owned bot must never anchor to its owner. The
+            // off-site stranded case is handled earlier by the portal wander; reaching here
+            // means hold position (own spot) rather than walk toward the owner.
+            primaryTargetPos = fallbackPos;
+            primaryTargetSource = "autopilot-hold";
+        } else {
+            primaryTargetPos = rawOwnerPos;
+            primaryTargetSource = "owner-raw";
+        }
+        return new TargetSnapshot(
+                formation,
+                new Point(rawOwnerPos),
+                new Point(rawFollowAnchorPos),
+                followAnchorName,
+                new Point(followBasePos),
+                new Point(followTargetPos),
+                moveTargetPos,
+                farmAnchorPos,
+                grindTargetPos,
+                new Point(primaryTargetPos),
+                primaryTargetSource);
+    }
+
+    private static final int RETREAT_HOLD_MS = 600;
+    private static final int RETREAT_ARRIVAL_TOLERANCE_X = 25; // 50ms tick can't land on an exact pixel
+    // Proactive danger-retreat hold: once a healthy bot decides a mob is too touch-dangerous, keep
+    // disengaging for at least this long (jittered) so it doesn't flip-flop between fleeing and
+    // re-engaging tick-to-tick. Distinct from RETREAT_HOLD_MS, which holds the spatial retreat goal.
+    private static final int DANGER_RETREAT_HOLD_MS = 1200;
+    private static final int DANGER_RETREAT_JITTER_MS = 400;
+    // Anti-freeze give-up: a bot whose every reachable mob is touch-dangerous would otherwise
+    // approach->flee->approive forever and never attack (frozen, esp. solo where mobs don't move).
+    // Cap how long danger-retreat may run UNBROKEN; once exceeded, suppress it and FIGHT for a window
+    // so the bot makes progress (reactive heal/pots are the survival net, the death-loop breaker the
+    // last resort). The streak resets the moment the bot reaches a non-dangerous target/spot.
+    static final int MAX_DANGER_RETREAT_MS = 3500;
+    private static final int DANGER_RETREAT_SUPPRESS_MS = 12_000;
+    // Same anti-freeze, for the ranged-SPACING retreat (degenAttackDone / shouldRetreatFromNearbyTarget).
+    // A ranged bot that can never open distance — mob chases at the same speed, blocked nav, pinned on
+    // a rope/ledge against a mob sitting on it — would retreat forever with the attack gate shut and
+    // freeze (observed on claw AND bow, 2026-06-18). Cap how long spacing-retreat may run while the mob
+    // stays inside the retreat band; once exceeded, FIGHT in place (degenerate-fire) for a window. The
+    // streak resets the instant the bot opens distance, so healthy kiting is untouched.
+    static final int MAX_RANGED_SPACING_RETREAT_MS = 1500;
+    static final int RANGED_SPACING_RETREAT_SUPPRESS_MS = 2500;
+
+    // AoE reposition commitment: returns the sweet-spot Point to walk to before firing, or null to
+    // fire now. Scores once when a commitment starts (BotCombatManager.aoeRepositionTarget); while
+    // committed it just returns the stored anchor — no further scoring — until the bot arrives, the
+    // bounded-chase deadline expires, or the target dies/clears.
+    private static Point resolveAoeReposition(BotEntry entry, Character bot, Monster target,
+                                              BotCombatManager.AttackPlan attackPlan, Point botPos) {
+        long now = System.currentTimeMillis();
+        if (entry.aoeRepositionAnchor != null) {
+            boolean done = now > entry.aoeRepositionDeadlineMs
+                    || target == null || !target.isAlive()
+                    || Math.abs(entry.aoeRepositionAnchor.x - botPos.x) <= BotCombatManager.cfg.AOE_REPOSITION_ARRIVAL_X;
+            if (done) {
+                entry.aoeRepositionAnchor = null;
+                entry.aoeRepositionDeadlineMs = 0L;
+                return null;
+            }
+            return entry.aoeRepositionAnchor;
+        }
+        Point anchor = BotCombatManager.aoeRepositionTarget(entry, bot, target, attackPlan);
+        if (anchor == null) {
+            // No AoE step worth it — try the inverse: step CLOSER to land a stronger out-of-reach
+            // skill instead of firing the weak long-reach plan now (shares the same anchor/deadline).
+            anchor = BotCombatManager.betterReachRepositionTarget(entry, bot, target, attackPlan);
+        }
+        if (anchor != null) {
+            entry.aoeRepositionAnchor = anchor;
+            entry.aoeRepositionDeadlineMs = now + BotCombatManager.cfg.AOE_REPOSITION_MAX_MS;
+        }
+        return anchor;
+    }
+
+    static Point selectGrindNavigationTarget(BotEntry entry, Point botPos, Point combatTargetPos) {
+        return selectGrindNavigationTarget(entry, botPos, combatTargetPos, false, false);
+    }
+
+    private static Point selectGrindNavigationTarget(BotEntry entry,
+                                                     Point botPos,
+                                                     Point combatTargetPos,
+                                                     boolean crossRegionRetreatChecked) {
+        return selectGrindNavigationTarget(entry, botPos, combatTargetPos, crossRegionRetreatChecked, false);
+    }
+
+    private static Point selectGrindNavigationTarget(BotEntry entry,
+                                                     Point botPos,
+                                                     Point combatTargetPos,
+                                                     boolean crossRegionRetreatChecked,
+                                                     boolean forceRetreat) {
+        return selectGrindNavigationTarget(entry, botPos, combatTargetPos, crossRegionRetreatChecked, forceRetreat, false);
+    }
+
+    // useSpacingHysteresis: when true, the spacing-retreat decision uses the enter/exit band
+    // (BotEntry.spacingRetreatActive) instead of the bare 80px threshold, and writes that state back.
+    // Only the grind spacing path passes true; the AoE-reposition and opportunity paths pass false so
+    // they never write the flag with a non-mob target (a reposition point / opportunity mob).
+    private static Point selectGrindNavigationTarget(BotEntry entry,
+                                                     Point botPos,
+                                                     Point combatTargetPos,
+                                                     boolean crossRegionRetreatChecked,
+                                                     boolean forceRetreat,
+                                                     boolean useSpacingHysteresis) {
+        if (entry == null || botPos == null || combatTargetPos == null) {
+            return combatTargetPos;
+        }
+
+        Character bot = entry.bot;
+        if (bot == null) {
+            return combatTargetPos;
+        }
+
+        long now = System.currentTimeMillis();
+        // forceRetreat (proactive danger-retreat) makes the bot back off even when it isn't yet
+        // inside the spatial ranged-spacing band — the mob is dangerous on contact, so distance is
+        // worth opening regardless of the normal spacing heuristic.
+        WeaponType retreatWeaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        boolean spacingRetreat;
+        if (useSpacingHysteresis) {
+            // Authoritative per-tick write of the enter/exit hysteresis state (mob target, same as the gate).
+            spacingRetreat = BotAttackExecutionProvider.isInSpacingRetreatBand(
+                    entry.spacingRetreatActive, retreatWeaponType, botPos, combatTargetPos);
+            entry.spacingRetreatActive = spacingRetreat;
+        } else {
+            spacingRetreat = BotAttackExecutionProvider.shouldRetreatFromNearbyTarget(
+                    retreatWeaponType, botPos, combatTargetPos);
+        }
+        boolean retreatNeeded = forceRetreat || spacingRetreat;
+
+        // Surround-breakout commitment: once pincered, keep bursting the SAME way until the
+        // bot is no longer flanked on both sides (or a safety timeout), re-issuing a forward
+        // step each tick. A per-step local retreat here would walk into the opposite mob and
+        // flip direction every time it arrives — the swarm oscillation we are fixing.
+        if (entry.breakoutDirection != 0) {
+            if (now >= entry.breakoutUntilMs || !BotAttackExecutionProvider.isSurrounded(bot, botPos)) {
+                entry.breakoutDirection = 0;
+                entry.breakoutUntilMs = 0L;
+            } else {
+                return breakoutStep(botPos, entry.breakoutDirection);
+            }
+        }
+
+        // Hysteresis: a previously committed retreat keeps its goal until either the
+        // hold expires, the bot has effectively arrived, or the bot wandered too far
+        // from the hold pos for it to still be the right answer.
+        if (entry.retreatHoldPos != null && now < entry.retreatHoldUntilMs) {
+            int dxHold = Math.abs(entry.retreatHoldPos.x - botPos.x);
+            if (dxHold <= RETREAT_ARRIVAL_TOLERANCE_X) {
+                entry.retreatHoldUntilMs = 0L;
+                entry.retreatHoldPos = null;
+            } else if (dxHold > BotCombatManager.cfg.RANGED_RETREAT_DISTANCE_X * 2) {
+                entry.retreatHoldUntilMs = 0L;
+                entry.retreatHoldPos = null;
+            } else {
+                return new Point(entry.retreatHoldPos);
+            }
+        } else if (entry.retreatHoldPos != null) {
+            entry.retreatHoldUntilMs = 0L;
+            entry.retreatHoldPos = null;
+        }
+
+        if (!retreatNeeded) {
+            return combatTargetPos;
+        }
+
+        // Prefer landing on a different walkable region than the target — mobs there can't
+        // path to the bot without traversing a nav edge, while the bot can still shoot across.
+        // Empty/sparse adjacent regions score highest. Cross-region uses the nav-edge
+        // pipeline for stickiness, so no separate hysteresis is set here.
+        Point crossRegionPos = crossRegionRetreatChecked
+                ? null
+                : selectCrossRegionRetreatTarget(entry, botPos, combatTargetPos);
+        if (crossRegionPos != null) {
+            return crossRegionPos;
+        }
+
+        // No separated region to flee to (e.g. one open platform). If the bot is pincered,
+        // commit to bursting out one side instead of micro-retreating into the other wall.
+        if (BotAttackExecutionProvider.isSurrounded(bot, botPos)) {
+            int dir = pickBreakoutDirection(entry, botPos, combatTargetPos);
+            entry.breakoutDirection = dir;
+            entry.breakoutUntilMs = now + BotCombatManager.cfg.BREAKOUT_MAX_MS;
+            // Drop any stale one-step hysteresis so it can't fight the committed breakout.
+            entry.retreatHoldPos = null;
+            entry.retreatHoldUntilMs = 0L;
+            return breakoutStep(botPos, dir);
+        }
+
+        Point retreatPos = BotAttackExecutionProvider.retreatTargetPosition(bot, botPos, combatTargetPos);
+        if (shouldUseLocalCombatRetreatTarget(entry, botPos, combatTargetPos, retreatPos)) {
+            entry.retreatHoldUntilMs = now + RETREAT_HOLD_MS;
+            entry.retreatHoldPos = new Point(retreatPos);
+            return retreatPos;
+        }
+        return combatTargetPos;
+    }
+
+    private static Point breakoutStep(Point botPos, int dir) {
+        return new Point(botPos.x + dir * BotCombatManager.cfg.RANGED_RETREAT_DISTANCE_X, botPos.y);
+    }
+
+    /**
+     * Proactive self-preservation: decide whether to disengage a touch-dangerous mob this tick.
+     * Fires only while HP is still healthy (the reactive heal path owns low-HP), so it is danger-
+     * driven and earlier than the 40%/autopot path — a distinct layer. Held with a jittered window
+     * (anti-flip-flop hysteresis, humanlike) once committed: while the hold is live the bot keeps
+     * disengaging even if the mob momentarily looks survivable, and the window only re-arms while
+     * the mob is still dangerous. Does no movement itself — the caller wires the verdict into the
+     * existing retreat machinery.
+     */
+    private static boolean computeProactiveDangerRetreat(BotEntry entry, Character bot, Monster target, long now) {
+        if (target == null || bot == null) {
+            entry.dangerRetreatUntilMs = 0L;
+            return false; // dangerGiveUp streak self-resets on the next non-dangerous tick
+        }
+        return applyDangerRetreatGiveUp(entry, BotCombatManager.shouldProactivelyRetreat(bot, target), now);
+    }
+
+    /**
+     * Danger-retreat hold + anti-freeze give-up state machine (pure over {@code entry}+{@code now}).
+     * Returns whether to proactively retreat THIS tick given a danger verdict. While the retreat
+     * keeps re-arming without ever reaching safety (the {@code dangerous} flag stays true past
+     * {@link #MAX_DANGER_RETREAT_MS}), it gives up: suppresses retreat for {@link
+     * #DANGER_RETREAT_SUPPRESS_MS} so the bot FIGHTS instead of looping forever. The streak (and thus
+     * the give-up timer) resets the moment the bot reaches a non-dangerous spot.
+     */
+    static boolean applyDangerRetreatGiveUp(BotEntry entry, boolean dangerous, long now) {
+        // Shared anti-freeze: while danger never clears past the cap, give up and fight.
+        if (entry.dangerGiveUp.forcedFight(dangerous, now, MAX_DANGER_RETREAT_MS, DANGER_RETREAT_SUPPRESS_MS)) {
+            entry.dangerRetreatUntilMs = 0L; // give-up also drops any live hold
+            return false;
+        }
+        if (dangerous) {
+            if (now >= entry.dangerRetreatUntilMs) {
+                entry.dangerRetreatUntilMs = now + DANGER_RETREAT_HOLD_MS
+                        + ThreadLocalRandom.current().nextInt(DANGER_RETREAT_JITTER_MS);
+            }
+            return true;
+        }
+        // Reached a non-dangerous spot: honor any live hold so a committed back-off finishes.
+        return now < entry.dangerRetreatUntilMs;
+    }
+
+    /**
+     * Choose which way to burst out of a surrounding swarm. Base preference is the more open
+     * side (the flank whose nearest mob is farther). When the nav graph is available, override
+     * with the side whose reachable walkable neighbor is less crowded, so the bot runs toward
+     * an exit instead of into a dead-end wall. Ties fall back to the open-side preference.
+     */
+    private static int pickBreakoutDirection(BotEntry entry, Point botPos, Point combatTargetPos) {
+        Character bot = entry.bot;
+        int base = BotAttackExecutionProvider.pickRetreatDirection(bot, botPos, combatTargetPos);
+        MapleMap map = bot != null ? bot.getMap() : null;
+        if (map == null || map.getFootholds() == null) {
+            return base;
+        }
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map, entry.movementProfile);
+        if (graph == null) {
+            return base;
+        }
+        int botRegionId = BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos);
+        if (botRegionId < 0) {
+            return base;
+        }
+        int leftBestMobs = Integer.MAX_VALUE;
+        int rightBestMobs = Integer.MAX_VALUE;
+        for (BotNavigationGraph.Edge edge : graph.getOutgoing(botRegionId)) {
+            if (edge.type != BotNavigationGraph.EdgeType.WALK) {
+                continue;
+            }
+            BotNavigationGraph.Region region = graph.getRegion(edge.toRegionId);
+            if (region == null || region.isRopeRegion) {
+                continue;
+            }
+            int side = Integer.signum(edge.endPoint.x - botPos.x);
+            int mobs = countMobsInRegion(graph, map, region);
+            if (side < 0) {
+                leftBestMobs = Math.min(leftBestMobs, mobs);
+            } else if (side > 0) {
+                rightBestMobs = Math.min(rightBestMobs, mobs);
+            }
+        }
+        if (leftBestMobs == rightBestMobs) {
+            return base;
+        }
+        return leftBestMobs < rightBestMobs ? -1 : 1;
+    }
+
+    /**
+     * Pick a one-edge-away region to retreat into, preferring regions that are NOT
+     * the target's region and contain the fewest mobs. Returns the edge's landing
+     * point so nav can route through the existing edge-traversal pipeline. Null
+     * means no separated region qualifies — caller falls back to in-region retreat.
+     *
+     * Scoring is simple by design (easy to eyeball in-game):
+     *   +1000  destination region has zero live mobs ("the empty platform next door")
+     *   -100*N each live mob in the destination region
+     *   -dx/10  prefer anchors closer to the target so projectiles still land
+     */
+    static Point selectCrossRegionRetreatTarget(BotEntry entry, Point botPos, Point combatTargetPos) {
+        if (entry == null || botPos == null || combatTargetPos == null) {
+            return null;
+        }
+        if (entry.climbing || entry.inAir || entry.navEdge != null) {
+            return null;
+        }
+        Character bot = entry.bot;
+        MapleMap map = bot != null ? bot.getMap() : null;
+        if (map == null || map.getFootholds() == null) {
+            return null;
+        }
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map, entry.movementProfile);
+        if (graph == null) {
+            BotNavigationGraphProvider.warmGraphAsync(map, entry.movementProfile);
+            return null;
+        }
+
+        int botRegionId = BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos);
+        if (botRegionId < 0) {
+            return null;
+        }
+        int targetRegionId = BotNavigationManager.resolveTargetRegionId(graph, entry, map, combatTargetPos);
+
+        int projectileRange = BotCombatManager.CLIENT_PROJECTILE_BASE_RANGE
+                + BotCombatManager.passiveProjectileRangeBonus(bot);
+        int yReachable = BotCombatManager.cfg.RANGED_DEGENERATE_RANGE_Y * 2;
+
+        // SSOT stickiness with the committed-route layer: hold the chosen cross-region flee point instead
+        // of re-scanning every region (findPath per region) each tick. Invalidations are cheap (no
+        // pathfind): arrival, mob no longer in projectile reach of the held point, flee region became
+        // crowded, or the hold timed out — any of which forces a fresh scan below.
+        long now = System.currentTimeMillis();
+        if (entry.crossRetreatHoldPos != null) {
+            Point held = entry.crossRetreatHoldPos;
+            BotNavigationGraph.Region holdRegion = graph.getRegion(entry.crossRetreatHoldRegionId);
+            boolean invalid = now >= entry.crossRetreatHoldUntilMs
+                    || Math.abs(held.x - botPos.x) <= RETREAT_ARRIVAL_TOLERANCE_X
+                    || Math.abs(held.x - combatTargetPos.x) > projectileRange
+                    || Math.abs(held.y - combatTargetPos.y) > yReachable
+                    || holdRegion == null
+                    || countMobsInRegion(graph, map, holdRegion) > 0;
+            if (invalid) {
+                clearCrossRetreatHold(entry);
+            } else {
+                return new Point(held);
+            }
+        }
+
+        Point result = selectReachableProjectileRetreatTarget(
+                graph, map, botPos, botRegionId, targetRegionId, combatTargetPos, projectileRange, yReachable);
+        if (result == null) {
+            BotNavigationGraph.Edge bestEdge = null;
+            int bestScore = Integer.MIN_VALUE;
+            for (BotNavigationGraph.Edge edge : graph.getOutgoing(botRegionId)) {
+                if (edge.type != BotNavigationGraph.EdgeType.WALK) {
+                    continue;
+                }
+                int toRegionId = edge.toRegionId;
+                if (toRegionId == botRegionId || toRegionId == targetRegionId) {
+                    continue;
+                }
+                BotNavigationGraph.Region region = graph.getRegion(toRegionId);
+                if (region == null || region.isRopeRegion) {
+                    continue;
+                }
+                Point anchor = edge.endPoint;
+                int dx = Math.abs(anchor.x - combatTargetPos.x);
+                int dy = Math.abs(anchor.y - combatTargetPos.y);
+                if (dx > projectileRange || dy > yReachable) {
+                    continue;
+                }
+                // Don't land back inside the degenerate band — that defeats the retreat.
+                if (dx <= BotCombatManager.cfg.RANGED_DEGENERATE_RANGE_X) {
+                    continue;
+                }
+
+                int mobsInRegion = countMobsInRegion(graph, map, region);
+                int score = (mobsInRegion == 0 ? 1000 : 0) - mobsInRegion * 100 - dx / 10;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestEdge = edge;
+                }
+            }
+            result = bestEdge != null ? new Point(bestEdge.endPoint) : null;
+        }
+
+        // Commit the freshly chosen flee point so the next ticks reuse it instead of re-scanning.
+        if (result != null) {
+            entry.crossRetreatHoldPos = new Point(result);
+            entry.crossRetreatHoldRegionId = BotNavigationManager.resolvePointTargetRegionId(graph, map, result);
+            entry.crossRetreatHoldUntilMs = now + RETREAT_HOLD_MS;
+        }
+        return result;
+    }
+
+    private static void clearCrossRetreatHold(BotEntry entry) {
+        entry.crossRetreatHoldPos = null;
+        entry.crossRetreatHoldRegionId = -1;
+        entry.crossRetreatHoldUntilMs = 0L;
+    }
+
+    private static Point selectReachableProjectileRetreatTarget(BotNavigationGraph graph,
+                                                                MapleMap map,
+                                                                Point botPos,
+                                                                int botRegionId,
+                                                                int targetRegionId,
+                                                                Point combatTargetPos,
+                                                                int projectileRange,
+                                                                int yReachable) {
+        Point bestPoint = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (BotNavigationGraph.Region region : graph.regions) {
+            if (region == null || region.isRopeRegion) {
+                continue;
+            }
+            if (region.id == botRegionId || region.id == targetRegionId) {
+                continue;
+            }
+
+            Point candidate = selectProjectileRetreatPoint(region, combatTargetPos, projectileRange, yReachable);
+            if (candidate == null) {
+                continue;
+            }
+
+            List<BotNavigationGraph.Edge> path = BotNavigationManager.findPathForRetreatProbe(
+                    graph, map, botPos, botRegionId, region.id, candidate);
+            if (path.isEmpty() || pathUsesPortal(path)) {
+                continue;
+            }
+
+            int pathCost = path.stream().mapToInt(pathEdge -> pathEdge.cost).sum();
+            int mobsInRegion = countMobsInRegion(graph, map, region);
+            int dx = Math.abs(candidate.x - combatTargetPos.x);
+            int score = (mobsInRegion == 0 ? 1500 : 0) - mobsInRegion * 150 - pathCost / 10 - dx / 10;
+            if (score > bestScore) {
+                bestScore = score;
+                bestPoint = candidate;
+            }
+        }
+        return bestPoint;
+    }
+
+    private static boolean pathUsesPortal(List<BotNavigationGraph.Edge> path) {
+        for (BotNavigationGraph.Edge edge : path) {
+            if (edge.type == BotNavigationGraph.EdgeType.PORTAL) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Point selectProjectileRetreatPoint(BotNavigationGraph.Region region,
+                                                      Point combatTargetPos,
+                                                      int projectileRange,
+                                                      int yReachable) {
+        int edgeMargin = Math.min(BotMovementManager.cfg.GRIND_EDGE_MARGIN, Math.max(0, region.width() / 4));
+        int minX = Math.max(region.minX + edgeMargin, combatTargetPos.x - projectileRange);
+        int maxX = Math.min(region.maxX - edgeMargin, combatTargetPos.x + projectileRange);
+        if (minX > maxX) {
+            minX = Math.max(region.minX, combatTargetPos.x - projectileRange);
+            maxX = Math.min(region.maxX, combatTargetPos.x + projectileRange);
+        }
+        if (minX > maxX) {
+            return null;
+        }
+
+        int minShootDx = BotCombatManager.cfg.RANGED_DEGENERATE_RANGE_X + 20;
+        int bestScore = Integer.MIN_VALUE;
+        Point bestPoint = null;
+        int[] probes = {
+                minX,
+                maxX,
+                combatTargetPos.x - minShootDx,
+                combatTargetPos.x + minShootDx,
+                (minX + maxX) / 2
+        };
+        for (int probe : probes) {
+            Point candidate = projectileRetreatCandidate(region, probe, minX, maxX,
+                    combatTargetPos, projectileRange, yReachable, minShootDx);
+            if (candidate == null) {
+                continue;
+            }
+            int dx = Math.abs(candidate.x - combatTargetPos.x);
+            int dy = Math.abs(candidate.y - combatTargetPos.y);
+            int score = -dx * 10 - dy;
+            if (score > bestScore) {
+                bestScore = score;
+                bestPoint = candidate;
+            }
+        }
+        return bestPoint;
+    }
+
+    private static Point projectileRetreatCandidate(BotNavigationGraph.Region region,
+                                                    int probeX,
+                                                    int minX,
+                                                    int maxX,
+                                                    Point combatTargetPos,
+                                                    int projectileRange,
+                                                    int yReachable,
+                                                    int minShootDx) {
+        int x = Math.max(minX, Math.min(maxX, probeX));
+        if (x < combatTargetPos.x && combatTargetPos.x - x < minShootDx) {
+            x = combatTargetPos.x - minShootDx;
+        } else if (x > combatTargetPos.x && x - combatTargetPos.x < minShootDx) {
+            x = combatTargetPos.x + minShootDx;
+        } else if (x == combatTargetPos.x) {
+            int leftX = combatTargetPos.x - minShootDx;
+            int rightX = combatTargetPos.x + minShootDx;
+            x = leftX >= minX ? leftX : rightX;
+        }
+        if (x < minX || x > maxX) {
+            return null;
+        }
+
+        Point point = region.pointAt(x);
+        int dx = Math.abs(point.x - combatTargetPos.x);
+        int dy = Math.abs(point.y - combatTargetPos.y);
+        if (dx < minShootDx
+                || dx > projectileRange
+                || dy > yReachable
+                || point.y > combatTargetPos.y + BotMovementManager.cfg.JUMP_Y_THRESH) {
+            return null;
+        }
+        return point;
+    }
+
+    private static int countMobsInRegion(BotNavigationGraph graph,
+                                         MapleMap map,
+                                         BotNavigationGraph.Region region) {
+        int count = 0;
+        for (server.life.Monster m : map.getAllMonsters()) {
+            if (!m.isAlive()) {
+                continue;
+            }
+            Point mp = m.getPosition();
+            if (mp == null) {
+                continue;
+            }
+            // Cheap bbox prefilter — region.findRegionId does foothold lookup, more expensive.
+            if (mp.x < region.minX - 5 || mp.x > region.maxX + 5
+                    || mp.y < region.minY - 80 || mp.y > region.maxY + 80) {
+                continue;
+            }
+            if (graph.findRegionId(map, mp) == region.id) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    static boolean shouldUseLocalCombatRetreatTarget(BotEntry entry,
+                                                     Point botPos,
+                                                     Point combatTargetPos,
+                                                     Point retreatPos) {
+        if (entry == null || botPos == null || combatTargetPos == null || retreatPos == null) {
+            return false;
+        }
+        if (entry.climbing || entry.inAir || entry.navEdge != null) {
+            return false;
+        }
+
+        Character bot = entry.bot;
+        MapleMap map = bot != null ? bot.getMap() : null;
+        if (map == null || map.getFootholds() == null) {
+            return false;
+        }
+
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map, entry.movementProfile);
+        if (graph == null) {
+            BotNavigationGraphProvider.warmGraphAsync(map, entry.movementProfile);
+            return false;
+        }
+        int botRegionId = BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos);
+        int combatTargetRegionId = BotNavigationManager.resolveTargetRegionId(graph, entry, map, combatTargetPos);
+        if (botRegionId < 0 || combatTargetRegionId < 0 || botRegionId != combatTargetRegionId) {
+            return false;
+        }
+
+        int retreatRegionId = BotNavigationManager.resolveTargetRegionId(graph, entry, map, retreatPos);
+        return retreatRegionId == botRegionId;
+    }
+
+    static boolean shouldSearchForGrindTarget(BotEntry entry,
+                                              Character bot,
+                                              Monster currentTarget,
+                                              BotCombatManager.AttackPlan currentAttackPlan,
+                                              long now) {
+        if (entry == null) {
+            return false;
+        }
+        if (currentTarget == null) {
+            return true;
+        }
+        if (now < entry.nextGrindTargetSearchAtMs) {
+            return false;
+        }
+        // Stay committed to a live target for a few seconds even while approaching it (out of range):
+        // re-scoring picks a different "best" mob each retarget tick as the bot moves, so without this
+        // the bot thrashes between far mobs and never reaches any. Commit breaks once it dies/vanishes.
+        if (currentTarget.isAlive() && now < entry.grindTargetCommitUntilMs) {
+            return false;
+        }
+        if (bot == null
+                || currentAttackPlan == null
+                || !BotCombatManager.isTargetInAttackRange(currentAttackPlan, bot, currentTarget)) {
+            return true;
+        }
+        // In range we normally stay committed (avoids flip-flop). Exception: an AoE bot stuck
+        // single-targeting keeps scanning for a better cluster — the switch itself is gated by
+        // cluster-size hysteresis in shouldSwitchToSearchedTarget.
+        return BotCombatManager.isAoeBotSingleTargeting(entry, currentAttackPlan);
+    }
+
+    /**
+     * Decide whether to adopt a freshly searched grind target over the current one. Always adopts
+     * when not committed (current null, no plan, or current out of attack range). When committed to
+     * an in-range target, only switches if the searched target anchors a strictly larger AoE cluster
+     * — hysteresis that prevents flip-flop between near-equal targets.
+     */
+    static boolean shouldSwitchToSearchedTarget(BotEntry entry, Character bot, Monster current,
+                                                Monster searched, BotCombatManager.AttackPlan currentPlan) {
+        if (searched == null || searched == current) {
+            return false;
+        }
+        if (current == null || bot == null || currentPlan == null
+                || !BotCombatManager.isTargetInAttackRange(currentPlan, bot, current)) {
+            return true;
+        }
+        return BotCombatManager.aoeClusterSize(entry, bot, searched)
+                > BotCombatManager.aoeClusterSize(entry, bot, current);
+    }
+
+    static Point resolveNoGrindTargetPosition(BotEntry entry, Point botPos, MapleMap map) {
+        if (entry == null || botPos == null) {
+            return botPos;
+        }
+        if (entry.grindLootTarget != null) {
+            Point lootPos = activeGrindLootPosition(entry, botPos);
+            if (lootPos != null) {
+                return lootPos;
+            }
+        }
+        // Grind doctrine: hold near the claimed spot's anchor (small in-spot drift) instead of
+        // region-random wandering — a camped bot visibly works its spot while waiting for respawns.
+        Point doctrineIdle = BotGrindDoctrine.idleAnchorTarget(entry, botPos);
+        if (doctrineIdle != null) {
+            return doctrineIdle;
+        }
+
+        BotNavigationGraph graph = map != null ? BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile) : null;
+        int regionId = graph != null ? BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos) : -1;
+        BotNavigationGraph.Region region = graph != null ? graph.getRegion(regionId) : null;
+        if (region != null && !region.isRopeRegion && region.width() > 0) {
+            Point wander = entry.patrolWanderTarget;
+            if (wander == null || isNear(botPos, wander, BotMovementManager.cfg.STOP_DIST)) {
+                int x = ThreadLocalRandom.current().nextInt(region.minX, region.maxX + 1);
+                wander = region.pointAt(x);
+                entry.patrolWanderTarget = wander;
+            }
+            return wander;
+        }
+
+        entry.patrolWanderTarget = null;
+        if (entry.wanderDirection == 0) {
+            entry.wanderDirection = ThreadLocalRandom.current().nextBoolean() ? 1 : -1;
+        }
+        return new Point(botPos.x + entry.wanderDirection * 200, botPos.y);
+    }
+
+    static Point resolveNoGrindTargetPosition(BotEntry entry, Point botPos) {
+        Character bot = entry != null ? entry.bot : null;
+        MapleMap map = bot != null ? bot.getMap() : null;
+        return resolveNoGrindTargetPosition(entry, botPos, map);
+    }
+
+    /** Max |y| gap (px) between a mob and a ground region's foothold to count the mob as standing
+     *  IN that region — beyond this it's airborne / on another platform and isn't attributed. */
+    private static final int IDLE_REGION_Y_BAND = 60;
+    /** Random idle-spot samples to pick the least-crowded from (break/leech destack). */
+    private static final int IDLE_DESTACK_SAMPLES = 8;
+    private static final int IDLE_ROPE_HEAD_CLEARANCE = 50;
+    private static final int IDLE_FALLBACK_MOB_HALF_WIDTH = 24;
+    private static final int IDLE_FALLBACK_MOB_LOWER_HEIGHT = 30;
+
+    /**
+     * Safe idle/rest region on the bot's CURRENT map — SSOT for all three idle states (out-of-pot
+     * HP-rest, party catch-up leech, in-session break). Ranks the map's ground regions by the summed
+     * REAL touch-danger of the live mobs standing in each (avoid + defense SSOT,
+     * {@link server.bots.combat.BotDefenseDataProvider#expectedTouchHpLossFraction}) and parks in a
+     * mob-free / lowest-danger one — a whole region with no mobs beats "farthest spot in a mobby room".
+     * {@code spread=false} (HP-rest, survival): take the single safest region and stand farthest from
+     * any mob. {@code spread=true} (leech/break): randomize among the equally-safe regions so multiple
+     * idlers don't pile on one spot (anchor is cached by the caller, so the pick is stable). Falls back
+     * to the plain no-grind wander without a graph.
+     */
+    static Point resolveSafeIdleRegion(BotEntry entry, Character bot, Point botPos, boolean spread) {
+        MapleMap map = bot != null ? bot.getMap() : null;
+        if (entry == null || botPos == null || map == null) {
+            return resolveNoGrindTargetPosition(entry, botPos, map);
+        }
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile);
+        if (graph == null || graph.regions.isEmpty()) {
+            return resolveNoGrindTargetPosition(entry, botPos, map);
+        }
+        var defense = server.bots.combat.BotDefenseDataProvider.getInstance();
+        Map<Integer, Double> dangerByRegion = new java.util.HashMap<>();
+        List<Point> mobPts = new ArrayList<>();
+        List<Monster> liveMobs = new ArrayList<>();
+        for (Monster m : map.getAllMonsters()) {
+            if (m == null || !m.isAlive()) {
+                continue;
+            }
+            liveMobs.add(m);
+            mobPts.add(m.getPosition());
+            BotNavigationGraph.Region r = idleRegionAt(graph, m.getPosition());
+            if (r != null) {
+                dangerByRegion.merge(r.id, defense.expectedTouchHpLossFraction(bot, m), Double::sum);
+            }
+        }
+        // Rest-spot safety: a ledge BEARING a static spawn is categorically hot (mobs patrol their
+        // whole foothold chain, even the currently-empty far tip) — hard-reject it as long as a
+        // spawn-free ledge remains. Spawn points also join the threat list for the axis-aware
+        // clearance pick below.
+        java.util.Set<Integer> hotSpawnRegions = java.util.Set.of();
+        List<Point> spawnThreats = List.of();
+        if (cfg.REST_SPOT_SAFETY_ENABLED) {
+            java.util.Set<Integer> hot = new java.util.HashSet<>();
+            List<Point> threats = new ArrayList<>();
+            for (server.life.SpawnPoint sp : map.getMonsterSpawn()) {
+                Point p = sp.getPosition();
+                if (p == null) {
+                    continue;
+                }
+                threats.add(p);
+                BotNavigationGraph.Region r = idleRegionAt(graph, p);
+                if (r != null) {
+                    hot.add(r.id);
+                }
+            }
+            hotSpawnRegions = hot;
+            spawnThreats = threats;
+        }
+        List<BotNavigationGraph.Region> ground = new ArrayList<>();
+        for (BotNavigationGraph.Region r : graph.regions) {
+            if (!r.isRopeRegion && r.width() > 0) {
+                ground.add(r);
+            }
+        }
+        if (!hotSpawnRegions.isEmpty()) {
+            List<BotNavigationGraph.Region> cold = new ArrayList<>(ground.size());
+            for (BotNavigationGraph.Region r : ground) {
+                if (!hotSpawnRegions.contains(r.id)) {
+                    cold.add(r);
+                }
+            }
+            if (!cold.isEmpty()) {
+                ground = cold;
+            }
+        }
+        if (ground.isEmpty()) {
+            Point ropeSpot = resolveSafeIdleRopeSpot(map, liveMobs);
+            return ropeSpot != null ? ropeSpot : resolveNoGrindTargetPosition(entry, botPos, map);
+        }
+        double minDanger = Double.MAX_VALUE;
+        for (BotNavigationGraph.Region r : ground) {
+            minDanger = Math.min(minDanger, dangerByRegion.getOrDefault(r.id, 0.0));
+        }
+        if (minDanger > 1e-9) {
+            Point ropeSpot = resolveSafeIdleRopeSpot(map, liveMobs);
+            if (ropeSpot != null) {
+                return ropeSpot;
+            }
+        }
+        List<BotNavigationGraph.Region> safest = new ArrayList<>();
+        for (BotNavigationGraph.Region r : ground) {
+            if (dangerByRegion.getOrDefault(r.id, 0.0) <= minDanger + 1e-9) {
+                safest.add(r);
+            }
+        }
+        if (spread) {
+            // Destack (owner rule: idle-spot picks should spread like the NPC-approach SSOT). Sample
+            // several random spots across the safest regions and take the one farthest from other
+            // characters, so idlers fan out instead of piling on one x - a bare random x destacks only
+            // by luck and left break/chill bots stacked on the same spot in town.
+            List<Point> others = new ArrayList<>();
+            for (Character c : map.getAllPlayers()) {
+                if (c != bot && c.getPosition() != null) {
+                    others.add(c.getPosition());
+                }
+            }
+            List<Point> candidates = new ArrayList<>();
+            for (int i = 0; i < IDLE_DESTACK_SAMPLES; i++) {
+                BotNavigationGraph.Region r = safest.get(ThreadLocalRandom.current().nextInt(safest.size()));
+                candidates.add(r.pointAt(ThreadLocalRandom.current().nextInt(r.minX, r.maxX + 1)));
+            }
+            Point spot = cfg.REST_SPOT_SAFETY_ENABLED
+                    ? pickSafestClearance(candidates, mobPts, spawnThreats, others)
+                    : pickFarthestFromMobs(candidates, others);
+            return spot != null ? spot : candidates.get(0);
+        }
+        BotNavigationGraph.Region pick = safest.get(0);
+        int span = pick.width();
+        int samples = Math.min(12, Math.max(2, span / 50 + 1));
+        List<Point> candidates = new ArrayList<>(samples);
+        for (int i = 0; i < samples; i++) {
+            candidates.add(pick.pointAt(pick.minX + (span * i) / Math.max(1, samples - 1)));
+        }
+        Point safe = cfg.REST_SPOT_SAFETY_ENABLED
+                ? pickSafestClearance(candidates, mobPts, spawnThreats, List.of())
+                : pickFarthestFromMobs(candidates, mobPts);
+        return safe != null ? safe : pick.centerPoint();
+    }
+
+    /** Height above a threat is worth this many horizontal px of gap (mobs don't climb); being
+     *  level with or below it earns no vertical credit. */
+    static final double IDLE_SAFE_VERTICAL_WEIGHT = 3.0;
+
+    /** Axis-aware clearance pick (rest-spot safety): maximize the minimum clearance over all live
+     *  mobs AND static spawns, with a small destack bonus for distance from other characters. */
+    private static Point pickSafestClearance(List<Point> candidates, List<Point> mobPts,
+                                             List<Point> spawnPts, List<Point> others) {
+        Point best = null;
+        double bestScore = -Double.MAX_VALUE;
+        for (Point c : candidates) {
+            if (c == null) {
+                continue;
+            }
+            double clearance = 100_000.0; // no threats -> everywhere is safe
+            for (Point t : mobPts) {
+                clearance = Math.min(clearance, idleClearance(c, t));
+            }
+            for (Point t : spawnPts) {
+                clearance = Math.min(clearance, idleClearance(c, t));
+            }
+            double destack = 0.0;
+            if (!others.isEmpty()) {
+                destack = Double.MAX_VALUE;
+                for (Point o : others) {
+                    destack = Math.min(destack, c.distance(o));
+                }
+            }
+            double score = clearance + 0.25 * destack;
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    private static double idleClearance(Point p, Point threat) {
+        return Math.abs(p.x - threat.x) + IDLE_SAFE_VERTICAL_WEIGHT * Math.max(0, threat.y - p.y);
+    }
+
+    /**
+     * SSOT for "pick a random spot to idle" across every park path (logout, operator-idle, break,
+     * idle-leech, inert-town-idle). One behavior: near a town NPC/character when the map is safe -
+     * the destack loiter that makes idlers fan out and look alive ({@link #pickTownLoiterAnchor}) -
+     * or the danger-aware safe-region spread ({@link #resolveSafeIdleRegion}) when live mobs are
+     * around (a break taken mid-grind). Both destack; callers just hold the returned spot and drive
+     * {@link #loiterAtAnchor}/{@link #walkToOrIdleAt} to it.
+     */
+    Point resolveIdleSpot(BotEntry entry, Character bot, Point botPos) {
+        if (bot != null && bot.getMap() != null && !bot.getMap().getAllMonsters().isEmpty()) {
+            return resolveSafeIdleRegion(entry, bot, botPos, true); // mobs near -> danger-aware spread
+        }
+        return pickTownLoiterAnchor(entry, bot, botPos); // safe map -> NPC-cluster destack
+    }
+
+    private static Point resolveSafeIdleRopeSpot(MapleMap map, List<Monster> liveMobs) {
+        if (map == null || map.getRopes().isEmpty()) {
+            return null;
+        }
+        List<RopeIdleWindow> safeWindows = new ArrayList<>();
+        for (Rope rope : map.getRopes()) {
+            RopeIdleWindow window = safestIdleWindowOnRope(rope, liveMobs);
+            if (window != null) {
+                safeWindows.add(window);
+            }
+        }
+        if (safeWindows.isEmpty()) {
+            return null;
+        }
+        RopeIdleWindow pick = safeWindows.get(ThreadLocalRandom.current().nextInt(safeWindows.size()));
+        return pick.randomPoint();
+    }
+
+    static RopeIdleWindow safestIdleWindowOnRope(Rope rope, List<Monster> liveMobs) {
+        if (rope == null) {
+            return null;
+        }
+        int minY = Math.max(BotPhysicsEngine.firstClimbableY(rope), rope.topY() + IDLE_ROPE_HEAD_CLEARANCE);
+        int maxY = rope.bottomY();
+        if (minY > maxY) {
+            return null;
+        }
+
+        List<RopeIdleWindow> windows = new ArrayList<>();
+        windows.add(new RopeIdleWindow(rope.x(), minY, maxY));
+        for (Monster mob : liveMobs) {
+            Rectangle lower = idleMobLowerTouchBounds(mob);
+            if (lower == null || rope.x() < lower.x || rope.x() > lower.x + lower.width) {
+                continue;
+            }
+            int unsafeMinY = lower.y;
+            int unsafeMaxY = lower.y + lower.height + BotCombatManager.cfg.MOB_TOUCH_SWEEP_HEIGHT;
+            List<RopeIdleWindow> next = new ArrayList<>();
+            for (RopeIdleWindow window : windows) {
+                next.addAll(window.without(unsafeMinY, unsafeMaxY));
+            }
+            windows = next;
+            if (windows.isEmpty()) {
+                return null;
+            }
+        }
+
+        RopeIdleWindow best = null;
+        for (RopeIdleWindow window : windows) {
+            if (best == null || window.height() > best.height()) {
+                best = window;
+            }
+        }
+        return best;
+    }
+
+    private static Rectangle idleMobLowerTouchBounds(Monster mob) {
+        if (mob == null || mob.getPosition() == null) {
+            return null;
+        }
+        Rectangle bounds = BotMobHitboxProvider.getInstance().getMobBounds(mob);
+        if (bounds == null) {
+            Point p = mob.getPosition();
+            return new Rectangle(p.x - IDLE_FALLBACK_MOB_HALF_WIDTH, p.y - IDLE_FALLBACK_MOB_LOWER_HEIGHT,
+                    IDLE_FALLBACK_MOB_HALF_WIDTH * 2 + 1, IDLE_FALLBACK_MOB_LOWER_HEIGHT + 1);
+        }
+        int lowerHeight = Math.max(1, bounds.height / 2);
+        return new Rectangle(bounds.x, bounds.y + bounds.height - lowerHeight, bounds.width, lowerHeight);
+    }
+
+    record RopeIdleWindow(int x, int minY, int maxY) {
+        int height() {
+            return maxY - minY;
+        }
+
+        Point randomPoint() {
+            int y = minY == maxY ? minY : ThreadLocalRandom.current().nextInt(minY, maxY + 1);
+            return new Point(x, y);
+        }
+
+        List<RopeIdleWindow> without(int unsafeMinY, int unsafeMaxY) {
+            if (unsafeMaxY < minY || unsafeMinY > maxY) {
+                return List.of(this);
+            }
+            List<RopeIdleWindow> kept = new ArrayList<>(2);
+            if (unsafeMinY > minY) {
+                kept.add(new RopeIdleWindow(x, minY, unsafeMinY - 1));
+            }
+            if (unsafeMaxY < maxY) {
+                kept.add(new RopeIdleWindow(x, unsafeMaxY + 1, maxY));
+            }
+            return kept;
+        }
+    }
+
+    /** The ground region a mob is standing in (x within span, foothold y within {@link #IDLE_REGION_Y_BAND}),
+     *  or null when it's airborne / off-platform. */
+    private static BotNavigationGraph.Region idleRegionAt(BotNavigationGraph graph, Point p) {
+        BotNavigationGraph.Region best = null;
+        int bestDy = Integer.MAX_VALUE;
+        for (BotNavigationGraph.Region r : graph.regions) {
+            if (r.isRopeRegion || r.width() <= 0 || p.x < r.minX || p.x > r.maxX) {
+                continue;
+            }
+            int dy = Math.abs(r.pointAt(p.x).y - p.y);
+            if (dy < bestDy) {
+                bestDy = dy;
+                best = r;
+            }
+        }
+        return bestDy <= IDLE_REGION_Y_BAND ? best : null;
+    }
+
+    /** Of {@code candidates}, the one whose nearest {@code mob} is farthest (max-min clearance). */
+    static Point pickFarthestFromMobs(List<Point> candidates, List<Point> mobs) {
+        Point best = null;
+        double bestClearance = -1;
+        for (Point cand : candidates) {
+            double nearest = Double.MAX_VALUE;
+            for (Point mob : mobs) {
+                nearest = Math.min(nearest, mob.distanceSq(cand));
+            }
+            if (nearest > bestClearance) {
+                bestClearance = nearest;
+                best = cand;
+            }
+        }
+        return best;
+    }
+
+    private static Point activeGrindLootPosition(BotEntry entry, Point botPos) {
+        MapItem loot = entry.grindLootTarget;
+        if (loot == null || botPos == null) {
+            entry.grindLootTarget = null;
+            return null;
+        }
+        Character bot = entry.bot;
+        if (loot.isPickedUp() || bot == null || bot.getMap() == null
+                || bot.getMap().getMapObject(loot.getObjectId()) != loot) {
+            entry.grindLootTarget = null;
+            return null;
+        }
+        if (!BotLootEligibility.canBotTargetLoot(entry, bot, bot.getMap(), loot, System.currentTimeMillis())) {
+            entry.grindLootTarget = null;
+            return null;
+        }
+        Point lootPos = loot.getPosition();
+        if (Math.abs(lootPos.x - botPos.x) <= cfg.LOOT_RADIUS
+                && Math.abs(lootPos.y - botPos.y) <= cfg.LOOT_RADIUS) {
+            suppressGrindLootRetry(entry, loot);
+            entry.grindLootTarget = null;
+            return null;
+        }
+        return lootPos;
+    }
+
+    static void suppressGrindLootRetry(BotEntry entry, MapItem loot) {
+        if (entry == null || loot == null) {
+            return;
+        }
+        entry.ignoredGrindLootObjectId = loot.getObjectId();
+        entry.ignoredGrindLootUntilMs = System.currentTimeMillis() + cfg.GRIND_LOOT_RETRY_SUPPRESS_MS;
+    }
+
+    static boolean isGrindLootRetrySuppressed(BotEntry entry, MapItem loot, long now) {
+        if (entry == null || loot == null || entry.ignoredGrindLootObjectId <= 0) {
+            return false;
+        }
+        if (now >= entry.ignoredGrindLootUntilMs) {
+            entry.ignoredGrindLootObjectId = 0;
+            entry.ignoredGrindLootUntilMs = 0L;
+            return false;
+        }
+        return entry.ignoredGrindLootObjectId == loot.getObjectId();
+    }
+
+    static double activeLootTravelDistSq(Point botPos, Point lootPos) {
+        if (botPos == null || lootPos == null) {
+            return Double.MAX_VALUE;
+        }
+        int dx = Math.max(0, Math.abs(lootPos.x - botPos.x) - cfg.LOOT_RADIUS);
+        int dy = Math.max(0, Math.abs(lootPos.y - botPos.y) - cfg.LOOT_RADIUS);
+        return (double) dx * dx + (double) dy * dy;
+    }
+
+    static Point convenientLootTarget(BotEntry entry, Point botPos, Point mobPos) {
+        Point lootPos = activeGrindLootPosition(entry, botPos);
+        if (lootPos == null) {
+            return null;
+        }
+        // The convenience test below compares loot travel-distance against the mob's STRAIGHT-LINE
+        // distance, which is only comparable on shared flat terrain. When the mob sits in another
+        // nav region (up a rope / across a drop) its Euclidean distance badly understates the real
+        // travel cost, so flat loot always "wins" and the bot lurches toward drops at the foot of
+        // the climb forever instead of ascending to fight (oscillation, never attacks). Restrict the
+        // detour to a same-region (flat) fight; cross-region loot is collected when the bot travels
+        // there naturally.
+        Character bot = entry != null ? entry.bot : null;
+        MapleMap map = bot != null ? bot.getMap() : null;
+        if (map != null) {
+            BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map, entry.movementProfile);
+            if (graph != null) {
+                int botRegionId = BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos);
+                int mobRegionId = BotNavigationManager.resolveTargetRegionId(graph, entry, map, mobPos);
+                if (botRegionId >= 0 && mobRegionId >= 0 && botRegionId != mobRegionId) {
+                    return null;
+                }
+            }
+        }
+        double lootDistSq = activeLootTravelDistSq(botPos, lootPos);
+        double mobDistSq = mobPos.distanceSq(botPos);
+        return lootDistSq < mobDistSq * cfg.GRIND_LOOT_CONVENIENCE_RATIO ? lootPos : null;
+    }
+
+    private static Point resolvePatrolWanderTarget(BotEntry entry, Point botPos, MapleMap map) {
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile);
+        BotNavigationGraph.Region region = graph != null ? graph.getRegion(entry.patrolRegionId) : null;
+        if (region == null || region.isRopeRegion || region.width() == 0) {
+            return resolveNoGrindTargetPosition(entry, botPos, map);
+        }
+        // Seek loot before roaming
+        Point lootTarget = BotInventoryManager.findNearestPatrolLootTarget(entry, entry.patrolRegionId);
+        if (lootTarget != null) {
+            entry.patrolWanderTarget = lootTarget;
+            return lootTarget;
+        }
+        // Roam within region
+        Point wander = entry.patrolWanderTarget;
+        if (wander == null || isNear(botPos, wander, BotMovementManager.cfg.STOP_DIST)) {
+            int x = ThreadLocalRandom.current().nextInt(region.minX, region.maxX + 1);
+            wander = region.pointAt(x);
+            entry.patrolWanderTarget = wander;
+        }
+        return wander;
+    }
+
+    /**
+     * True when the bot is physically standing in its patrol region. Gates roam-mode
+     * opportunity attacks: while in-region the bot may fire at any mob in attack range
+     * (including out-of-region ones), but if a knockback shoves it out of its region we
+     * suppress OA so it paths home first instead of drifting away chasing stray mobs.
+     */
+    private static boolean isBotInPatrolRegion(BotEntry entry, Character bot, Point botPos) {
+        if (entry.patrolRegionId < 0 || bot == null) {
+            return false;
+        }
+        MapleMap map = bot.getMap();
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile);
+        if (graph == null) {
+            return false;
+        }
+        return BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos) == entry.patrolRegionId;
+    }
+
+    // Main tick
+    // -------------------------------------------------------------------------
+
+    private void tick(BotEntry entry, int ownerCharId, int botCharId) {
+        // Clock choice: nanoTime is ~15µs/call on this host (QEMU HPET) — only pay it while the
+        // monitor records. The always-on stall watch (250ms threshold) is fine on the ms clock.
+        boolean perf = BotPerformanceMonitor.enabled();
+        long startedAtNs = perf ? System.nanoTime() : 0L;
+        long startedAtMs = perf ? 0L : System.currentTimeMillis();
+        BotPerformanceMonitor.beginTickTrace();
+        try {
+            tickCore(entry, ownerCharId, botCharId);
+            settleIdleIfUnbroadcast(entry);
+            resetBotTickFailures(entry);
+        } catch (Throwable t) {
+            handleBotTickFailure(entry, ownerCharId, botCharId, t);
+        } finally {
+            long elapsedNs = perf
+                    ? System.nanoTime() - startedAtNs
+                    : (System.currentTimeMillis() - startedAtMs) * 1_000_000L;
+            if (perf) {
+                BotPerformanceMonitor.record("tick-total", elapsedNs);
+            }
+            BotPerformanceMonitor.noteTickStall(entry, elapsedNs);
+            BotPerformanceMonitor.endTickTrace();
+        }
+    }
+
+    /**
+     * Common-tick SSOT for "stopped moving -> stand". If the tick was consumed without any movement
+     * broadcast (a dwell/wait branch that {@code return true}d without stepping physics) yet the last
+     * packet still showed motion, settle the bot to STAND once so observers don't extrapolate a stale
+     * WALK into walk-in-place. Gated tightly so it fires exactly on the stop tick and never spams:
+     *  - {@code broadcastedThisTick}: an actively-moving tick already broadcast — never force-stop it.
+     *  - last broadcast at rest AND not a walk stance: nothing to settle (this is what makes it
+     *    one-shot). A rest-velocity packet can still carry a WALK stance (walking blocked against a
+     *    wall/ledge broadcasts velocity 0 with the walk key held) — going silent on that leaves
+     *    observers rendering walk-in-place forever, so it settles too.
+     *  - dead / spawn-warmup / skip-delay / airshow / air / climb: not a grounded resting state.
+     */
+    private void settleIdleIfUnbroadcast(BotEntry entry) {
+        if (entry == null || entry.broadcastedThisTick) {
+            return;
+        }
+        if (entry.lastBroadcastVelX == 0 && entry.lastBroadcastVelY == 0
+                && !CharacterStance.isWalking(entry.lastBroadcastStance)) {
+            return; // already broadcast at rest — settling again would be a no-op (and the dedup eats it)
+        }
+        Character bot = entry.bot;
+        if (bot == null || bot.getMap() == null || bot.getHp() <= 0) {
+            return;
+        }
+        if (entry.airshowActive || entry.spawnWarmupMs > 0 || entry.skipDelayMs > 0
+                || entry.inAir || entry.climbing) {
+            return;
+        }
+        BotMovementManager.settleIdle(entry);
+    }
+
+    /** Test-only hook: invokes {@link #runCommonTickSystems} on a caller-owned entry. */
+    void runCommonTickSystemsForTest(BotEntry entry, Character bot, Character owner, boolean runAiTick) {
+        runCommonTickSystems(entry, bot, owner, runAiTick);
+    }
+
+    /**
+     * Test-only entry point that runs the full bot tick (including all common systems,
+     * AI, navigation, and movement) against a {@link BotEntry} the caller already owns.
+     * Bypasses the {@link #bots} registry lookup so harnesses can drive mocked bots
+     * without going through {@code registerBotInternal}.
+     */
+    void runTickForTest(BotEntry entry) {
+        if (entry == null || entry.bot == null) {
+            return;
+        }
+        int botCharId = entry.bot.getId();
+        long startedAt = BotPerformanceMonitor.enabled() ? System.nanoTime() : 0L;
+        try {
+            tickCore(entry, entry.ownerCharId, botCharId);
+            settleIdleIfUnbroadcast(entry);
+        } catch (Throwable t) {
+            log.warn("runTickForTest: tickCore threw for bot {}", entry.bot.getName(), t);
+        } finally {
+            if (startedAt != 0L) {
+                BotPerformanceMonitor.record("tick-total", System.nanoTime() - startedAt);
+            }
+        }
+    }
+
+    private void tickCore(BotEntry entry, int ownerCharId, int botCharId) {
+        if (entry == null) return;
+        entry.broadcastedThisTick = false; // re-armed each tick; settleIdleIfUnbroadcast reads it post-tick
+        if (entry.airshowActive) return;
+        if (entry.spawnWarmupMs > 0) { // emulate client loading/login: idle 2-7s after spawn
+            entry.spawnWarmupMs = BotMovementManager.tickDown(entry.spawnWarmupMs);
+            return;
+        }
+        if (entry.skipDelayMs > 0) {
+            entry.skipDelayMs = BotMovementManager.tickDown(entry.skipDelayMs);
+            return;
+        }
+        Character bot = entry.bot;
+
+        // Guard: bot was removed from its map externally (e.g. a prior disconnect race).
+        // Stop ticking and clean up rather than NPE-spamming TimerManager workers. Disconnect the
+        // character as well — dropping only the entry left an untickable zombie online.
+        if (bot.getMap() == null) {
+            removeBotByCharId(botCharId, "tickCore map-null guard");
+            if (bot.getClient() != null) {
+                bot.getClient().forceDisconnect();
+            }
+            return;
+        }
+
+        // Heartbeat: keep the bot's lastPacket fresh and broadcast a standing-in-place
+        // movement packet every 10 minutes so the server never considers the bot idle.
+        // Covers all modes: idle, follow, and grind.
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - entry.lastHeartbeatAtMs >= 600_000L) {
+            entry.lastHeartbeatAtMs = nowMs;
+            bot.getClient().updateLastPacket();
+            BotMovementManager.broadcastMovement(entry);
+        }
+
+        // Unobserved-map LOD (Stage 1): compute the fidelity level + apply its tick cadence. Inert in
+        // Stage 1 — cadenceForLod always returns TICK_MS until Stage 2's coarse-tick path exists, so this
+        // never actually retasks and changes no behavior; only entry.lod is populated (surfaced in debug).
+        // A headless client has finished loading by its first scheduled tick after entry.
+        // Real clients acknowledge this through PlayerMapTransitionHandler; without the ACK,
+        // ChangeMapHandler refuses an ordinary death-popup exit as "still changing maps".
+        if (bot.isChangingMaps()) bot.setMapTransitionComplete();
+        updateLod(entry, bot);
+        maybeAdjustCadence(entry, ownerCharId, botCharId);
+
+        BotOfferManager.expirePendingOffer(entry);
+        boolean runAiTick = consumeAiTick(entry);
+        entry.lastTickWasAi = runAiTick;
+        entry.lastTickAtMs = System.currentTimeMillis();
+
+        Character owner = resolveTickOwner(entry, ownerCharId);
+        if (handleOwnerOfflineOrDead(entry, bot, owner, nowMs, ownerCharId)) {
+            return;
+        }
+
+        // Dead state must run even when the owner is offline/null. Otherwise a bot
+        // that dies just before owner disconnect stays dead because the owner-null
+        // idle path below returns before respawn can fire.
+        if (handleDeadTick(entry, bot, owner)) {
+            return;
+        }
+        if (owner == null && (BotZakumBattle.belongsTo(bot, ownerCharId) || BotCarnivalRun.belongsTo(bot, ownerCharId) || BotEllinRun.belongsTo(bot, ownerCharId) || BotMagatiaRun.belongsTo(bot, ownerCharId))) {
+            groundAfterMapChange(entry, bot);
+            if (BotCarnivalRun.belongsTo(bot, ownerCharId)) BotCarnivalRun.tick(entry, bot, runAiTick);
+            else if (BotEllinRun.belongsTo(bot, ownerCharId)) BotEllinRun.tick(entry, bot, runAiTick);
+            else if (BotMagatiaRun.belongsTo(bot, ownerCharId)) BotMagatiaRun.tick(entry, bot, runAiTick);
+            else BotZakumBattle.tick(entry, bot, runAiTick);
+            return; // The expedition controller owns normal exit/save after human logout.
+        }
+
+        // Real-player takeover (@botme/@botparty) stays grind-focused: never auto-scroll real gear or
+        // auto-craft with real materials without the human present. Population bots do both freely.
+        if (!isRealPlayerTakeover(entry)) {
+            BotSkillBookManager.tick(entry, bot, nowMs);
+            BotScrollManager.tickAutoScroll(entry, bot, nowMs);
+            BotMakerManager.tickAutoCraft(entry, bot, nowMs);
+        }
+
+        // Operator RTS command (BotWorldGraphWebServer console): for its window this overrides
+        // autopilot/idle/follow. Placed before the owner-null and idle fast-paths so it intercepts
+        // them; MOVE returns false to fall through to the normal travel/grind pipeline (map-change
+        // grounding + autopilot travel), with re-decide/recover suppressed while the command is live.
+        if (entry.operatorCmd != null) {
+            if (nowMs >= entry.operatorCmdUntilMs) {
+                clearOperatorCmd(entry); // window elapsed -> resume autopilot below
+            } else {
+                if (entry.operatorCmdPending) {
+                    initOperatorCommand(entry, bot, nowMs);
+                    entry.operatorCmdPending = false;
+                }
+                if (entry.operatorCmd != null
+                        && tickOperatorCommand(entry, bot, bot.getPosition(), nowMs, runAiTick)) {
+                    return;
+                }
+            }
+        }
+
+        // Debug-follow TTL lapsed: a gm6-followed bot whose admin walked away (no command for the
+        // commander window) would otherwise idle forever with a dead anchor. Drop the binding and resume
+        // its own play, same path managed bots start on. One-shot — clearDebugCommander flips the flag.
+        if (entry.debugCommanderFollow && entry.debugCommanderId > 0 && !isDebugCommanderFresh(entry)) {
+            clearDebugCommander(entry);
+            startTakeoverAutopilot(entry, bot);
+            return;
+        }
+
+        if (owner == null && !BotAutopilotManager.isActive(entry) && !entry.loggingOut) {
+            entry.following = false;
+            if (groundAfterMapChange(entry, bot)) {
+                return;
+            }
+            // Owner-offline pass-through: when entry.moveTarget is set (currently by
+            // the offline-town cluster, but any caller of issueMoveTo) the bot still
+            // walks toward it. Same field and movement core as the player "here"
+            // command — only the tick gate differs because the regular pipeline is
+            // tightly coupled to `owner` for combat/follow/heal logic that's all
+            // skipped here.
+            if (entry.moveTarget != null) {
+                tickStandaloneMoveTarget(entry, bot, runAiTick);
+            } else {
+                tickIdleEntry(entry, bot);
+            }
+            return;
+        }
+        if (owner == null) {
+            // Explicitly-ordered autopilot keeps playing while the owner is offline (until
+            // handleOwnerOfflineOrDead's hard limit warps it home). The pipeline below is
+            // owner-null tolerant: snapshot/follow/recovery/common systems all guard.
+            entry.following = false;
+        }
+
+        BotMovementManager.refreshMovementProfile(entry);
+        boolean perf = BotPerformanceMonitor.enabled();
+
+        // On any map change (legacy warp landing, travel portal hop, NPC-triggered portal):
+        // rebuild footholds, reset physics, and snap to ground BEFORE anything else runs — including
+        // the common tick systems: a PQ run machine (BotPqHooks) consumes every tick while its maps
+        // host the bot, so housekeeping ordered after it would be starved forever, leaving the bot
+        // floating at the warp-in point on stale footholds with travel dead (lastMapId mismatch).
+        if (entry.lastMapId != bot.getMapId()) {
+            if (!perf) {
+                entry.lastMapId = bot.getMapId();
+                BotPhysicsEngine.spawnIntoMap(entry, bot); // snap, or fall-by-gravity if dropped above the floor
+                BotMovementManager.resetEntryStateAfterTeleport(entry);
+                BotNavigationGraphProvider.warmGraphAsync(bot.getMap(), entry.movementProfile);
+                BotMovementManager.broadcastMovement(entry);
+                if (BotPqHooks.requiresGrind(entry, bot)) { issueGrind(entry); }
+                else if (BotPqHooks.requiresFollow(entry, bot) && entry.owner != bot) { issueFollowOwner(entry); }
+                else { entry.kpq.stage5Claimed = false; } // left KPQ — reset for next run
+                BotShopManager.onMapChange(entry, bot);
+                armPostWarpQuiet(entry);
+                BotChatManager.checkBotStatus(entry, bot);
+            } else {
+                long tMapChange = System.nanoTime();
+                try {
+                    entry.lastMapId = bot.getMapId();
+                    BotPhysicsEngine.spawnIntoMap(entry, bot); // snap, or fall-by-gravity if dropped above the floor
+                    BotMovementManager.resetEntryStateAfterTeleport(entry);
+                    BotNavigationGraphProvider.warmGraphAsync(bot.getMap(), entry.movementProfile);
+                    BotMovementManager.broadcastMovement(entry);
+                    if (BotPqHooks.requiresGrind(entry, bot)) { issueGrind(entry); }
+                    else if (BotPqHooks.requiresFollow(entry, bot) && entry.owner != bot) { issueFollowOwner(entry); }
+                    else { entry.kpq.stage5Claimed = false; } // left KPQ — reset for next run
+                    BotShopManager.onMapChange(entry, bot);
+                    armPostWarpQuiet(entry);
+                    BotChatManager.checkBotStatus(entry, bot);
+                } finally {
+                    BotPerformanceMonitor.record("tick-map-change", System.nanoTime() - tMapChange);
+                }
+            }
+            return;
+        }
+
+        Point botPos = bot.getPosition();
+        Character followAnchor = resolveFollowAnchor(entry, owner);
+        TargetSnapshot targetSnapshot = captureTargetSnapshot(entry);
+        Point ownerPos = targetSnapshot.rawOwnerPos();
+        updateObservedOwnerMotion(entry, ownerPos);
+        entry.lastOwnerPos = new Point(ownerPos); // raw owner pos before formation offset/snap — used by path logger
+        clearFarmAnchorOnMapChange(entry, bot);
+        clearPatrolOnMapChange(entry, bot);
+        Point targetPos = targetSnapshot.primaryTargetPos();
+        clearFollowActionMoveWindowIfSettled(entry, botPos, targetSnapshot);
+
+        // These run in all modes (idle, follow, grind)
+        long tCommonTrace = BotPerformanceMonitor.startStallPhase();
+        if (runCommonTickSystems(entry, bot, owner, runAiTick)) {
+            BotPerformanceMonitor.recordStallPhase("tick-common-systems", tCommonTrace);
+            return;
+        }
+        BotPerformanceMonitor.recordStallPhase("tick-common-systems", tCommonTrace);
+
+        // Trade window open (or non-Trade market work staging inventory, e.g. stall stocking /
+        // merchant buys — entry.marketBusy): keep physics consistent (gravity / swim / idle
+        // stance) but do not issue any movement input — no follow, grind, attack, teleport, or
+        // shop visit. Prevents the bot from wandering away or auto-equipping mid-exchange.
+        if (bot.getTrade() != null || entry.marketBusy) {
+            if (!perf) {
+                tickTradePhysicsOnly(entry, bot);
+            } else {
+                long tTrade = System.nanoTime();
+                try { tickTradePhysicsOnly(entry, bot); }
+                finally { BotPerformanceMonitor.record("tick-trade-physics", System.nanoTime() - tTrade); }
+            }
+            return;
+        }
+
+        // A scheduled logout must reach the tickLogout branch below even when the bot is otherwise
+        // idle. The idle fast-path consumes the tick and returns, so without this guard a logging-out
+        // bot that has gone idle (e.g. arrived in town between autopilot decisions) never runs the
+        // linger/disconnect and stands online forever past its deadline.
+        if (!entry.loggingOut) {
+            if (tickTownIdleDestack(entry, bot, runAiTick)) {
+                return; // walking to / holding at a spread town-idle spot instead of stacking in place
+            }
+            boolean idleConsumed;
+            if (!perf) {
+                idleConsumed = tickIdleEntry(entry, bot);
+            } else {
+                long tIdle = System.nanoTime();
+                idleConsumed = tickIdleEntry(entry, bot);
+                BotPerformanceMonitor.record("tick-idle", System.nanoTime() - tIdle);
+            }
+            if (idleConsumed) {
+                return;
+            }
+        }
+
+        // Logging out: retreat to a safe town and stand at a random spot until the linger deadline,
+        // then say goodbye + disconnect. Takes precedence over grind/follow so the bot stops fighting
+        // the moment its session ends and never vanishes mid-dungeon.
+        if (entry.loggingOut) {
+            tickLogout(entry, bot, botPos, runAiTick);
+            return;
+        }
+
+        // Autopilot: owner-ordered independent play. Consumes the tick while walking a
+        // travel hop toward its chosen grind map; on site it lets the grind flow run.
+        long tAutopilotTrace = BotPerformanceMonitor.startStallPhase();
+        boolean autopilotConsumed = BotAutopilotManager.tick(entry, bot, runAiTick);
+        // Feed the operator-MOVE no-progress clock with the travel outcome: a map hop OR an actively-
+        // underway hop/ferry wait (autopilotConsumed) refreshes it; a wedged single map accumulates and
+        // trips tickOperatorCommand's stall check next tick (-> log + idle for the rest of the window).
+        if ((entry.operatorCmd == BotEntry.OperatorCmd.MOVE || entry.operatorCmd == BotEntry.OperatorCmd.MOVE_ATTACK)
+                && bot.getMapId() != entry.operatorMoveMapId) {
+            entry.operatorMoveProgress.record(bot, autopilotConsumed, nowMs);
+        }
+        if (autopilotConsumed) {
+            BotPerformanceMonitor.recordStallPhase("tick-autopilot", tAutopilotTrace);
+            return;
+        }
+        BotPerformanceMonitor.recordStallPhase("tick-autopilot", tAutopilotTrace);
+
+        // Map change and teleport checks only apply when following a live anchor.
+        // Shop visits are intentional same-map detours and must not be pulled back
+        // to the owner while walking to the NPC. A resupply errand is the same intent
+        // one step earlier -- the bot is traveling its own town trip (autopilotErrandMapId
+        // set), but transit-follow may have left `following` true, and syncFollowMap would
+        // then warp it straight back to the leader's grind map mid-errand (it never reaches
+        // the shop). The cohesion gate at BotAutopilotManager.tick uses the same condition.
+        if (!entry.shopVisitPending && entry.autopilotErrandMapId == -1
+                && syncFollowMap(entry, bot, followAnchor, runAiTick)) {
+            return;
+        }
+        if (recoverGrindPartyTeleportDistance(entry, bot, followAnchor)) {
+            return;
+        }
+        // Teleport if hopelessly far — applies to both follow and grind (catches falling off map)
+        if (recoverTeleportDistance(entry, bot, targetPos)) {
+            return;
+        }
+
+        // Shop visit: navigate to approach point before resuming normal flow.
+        // Keep this ahead of follow/combat/grind logic so resupply movement is not
+        // coupled to owner proximity.
+        if (entry.shopVisitPending) {
+            boolean consumed;
+            if (!perf) {
+                consumed = BotShopManager.tickShopVisit(entry, bot);
+            } else {
+                long tShop = System.nanoTime();
+                consumed = BotShopManager.tickShopVisit(entry, bot);
+                BotPerformanceMonitor.record("tick-shop-visit", System.nanoTime() - tShop);
+            }
+            targetPos = entry.shopTargetPos != null ? entry.shopTargetPos : entry.shopNpcPos;
+            if (!consumed && entry.shopApproachDelayMs > 0) {
+                return;
+            }
+            if (targetPos != null) {
+                stepMovementCore(entry, targetPos, runAiTick);
+            }
+            return;
+        }
+
+        // Just warped in: stand a beat and get your bearings before fighting/grinding. Only on-map
+        // action waits this out — travel hops return above (autopilot/follow) while in transit, so
+        // multi-hop routes aren't slowed. ponytail: suppresses proactive AI only; physics already ran.
+        if (System.currentTimeMillis() < entry.postWarpQuietUntilMs) {
+            return;
+        }
+
+        // Follow mode: attack monsters already in attack range without chasing
+        if (entry.following && runAiTick && !entry.climbing
+                && followAnchor != null
+                && bot.getMapId() == followAnchor.getMapId()
+                && Math.abs(botPos.x - followAnchor.getPosition().x) <= BotMovementManager.cfg.FOLLOW_DIST * 5) {
+            LocalOpportunityAttackResult result;
+            if (!perf) {
+                result = tryLocalOpportunityAttack(
+                        entry, bot, botPos, targetPos, targetSnapshot.followTargetPos(), true, true, false);
+            } else {
+                long tOpp = System.nanoTime();
+                result = tryLocalOpportunityAttack(
+                        entry, bot, botPos, targetPos, targetSnapshot.followTargetPos(), true, true, false);
+                BotPerformanceMonitor.record("opportunity-attack", System.nanoTime() - tOpp);
+            }
+            targetPos = result.targetPos();
+            if (result.consumedTick()) {
+                return;
+            }
+        }
+
+        if (tryFollowIdleMovementFastPath(entry, bot, targetPos, nowMs)) {
+            return;
+        }
+
+        if (runAiTick && shouldUseScriptedMoveLocalCombat(entry, targetPos)) {
+            clearActionMoveWindowIfSettled(entry, botPos, targetPos);
+            LocalOpportunityAttackResult result;
+            if (!perf) {
+                result = tryLocalOpportunityAttack(
+                        entry, bot, botPos, targetPos, targetPos, true, true, false);
+            } else {
+                long tOppS = System.nanoTime();
+                result = tryLocalOpportunityAttack(
+                        entry, bot, botPos, targetPos, targetPos, true, true, false);
+                BotPerformanceMonitor.record("opportunity-attack", System.nanoTime() - tOppS);
+            }
+            if (result.consumedTick()) {
+                return;
+            }
+            targetPos = result.targetPos();
+            if (!perf) {
+                stepMovementCore(entry, targetPos, runAiTick);
+            } else {
+                long tStep = System.nanoTime();
+                try { stepMovementCore(entry, targetPos, runAiTick); }
+                finally { BotPerformanceMonitor.record("step-movement-core", System.nanoTime() - tStep); }
+            }
+            return;
+        }
+
+        if (entry.farmAnchor != null) {
+            if (!perf) {
+                tickAnchoredFarm(entry, bot, botPos, runAiTick);
+            } else {
+                long tFarm = System.nanoTime();
+                try { tickAnchoredFarm(entry, bot, botPos, runAiTick); }
+                finally { BotPerformanceMonitor.record("tick-anchored-farm", System.nanoTime() - tFarm); }
+            }
+            return;
+        }
+
+        // Party-cohesion portal-anchored wait: the leader is holding in transit for stragglers,
+        // loitering at the next-hop portal (opportunity-attacking, not chasing) so the group
+        // reassembles there. The mapId guard self-clears the anchor once the leader changes
+        // maps. tickPartyCohesion sets/clears autopilotWaitAnchor; combat keeps firing here.
+        if (entry.autopilotWaitAnchor != null) {
+            if (entry.autopilotWaitAnchorMapId == bot.getMapId()) {
+                loiterAtAnchor(entry, bot, botPos, new Point(entry.autopilotWaitAnchor), runAiTick);
+                return;
+            }
+            entry.autopilotWaitAnchor = null; // moved on (e.g. arrived) — drop the stale pin
+            entry.autopilotWaitAnchorMapId = -1;
+        }
+
+        // Inert+grinding wedge guard: a self-driving bot (no live human owner) that is grinding=true but
+        // has NO autopilot destination (autopilotMapId=-1) is local-grinding with nowhere to be — e.g. an
+        // @botparty member that lost its party plan after a death and never rejoined, left standing in a
+        // town "grinding here" forever. maybeRecoverInertAutopilot can't save it: it only runs for IDLE
+        // bots, so grinding=true blocks it (the "Recovery: BLOCKED by grinding" pathlog line). For an
+        // owner-less / self-owned / botified-owner bot there is no legitimate local grind (that's an owner
+        // "grind here" concept), so reconcile the inconsistent state to idle — exactly what the death-loop
+        // escape does in respawnBot — and the next idle tick re-decides / rejoins the party.
+        if (entry.grinding && !BotAutopilotManager.isActive(entry) && isSelfDrivingBot(entry)
+                && !entry.following && entry.operatorCmd == null && entry.farmAnchor == null) {
+            log.warn("bot {} wedged (grinding with no autopilot dest, map {}) - resetting to idle so"
+                    + " recovery can re-decide/rejoin", bot.getName(), bot.getMapId());
+            clearMode(entry);
+            return; // idle now; maybeRecoverInertAutopilot runs on the next idle tick
+        }
+
+        // Grind mode: navigate toward nearest monster, attack when in range
+        if (entry.grinding) {
+            // Stage 3 (design §2.3): a covered unobserved (LOD1) bot skips real combat + movement and
+            // emits calibrated abstract kills instead; uncovered/observed grinders fall through to real
+            // combat below. tickAbstractGrind always consumes the tick (the bot holds ground).
+            if (abstractGrindEligible(entry)) {
+                if (!perf) {
+                    long tAbs = BotPerformanceMonitor.startStallPhase();
+                    tickAbstractGrind(entry, bot, botPos, runAiTick);
+                    BotPerformanceMonitor.recordStallPhase("tick-abstract-grind", tAbs);
+                } else {
+                    long tAbs = System.nanoTime();
+                    try {
+                        tickAbstractGrind(entry, bot, botPos, runAiTick);
+                    } finally {
+                        BotPerformanceMonitor.record("tick-abstract-grind", System.nanoTime() - tAbs);
+                    }
+                }
+                return;
+            }
+            LocalOpportunityAttackResult grindResult;
+            if (!perf) {
+                long tGrindTrace = BotPerformanceMonitor.startStallPhase();
+                grindResult = tickGrindMode(entry, bot, botPos, targetPos, runAiTick);
+                BotPerformanceMonitor.recordStallPhase("tick-grind-dispatch", tGrindTrace);
+            } else {
+                long tGrindDispatch = System.nanoTime();
+                try {
+                    grindResult = tickGrindMode(entry, bot, botPos, targetPos, runAiTick);
+                } finally {
+                    BotPerformanceMonitor.record("tick-grind-dispatch", System.nanoTime() - tGrindDispatch);
+                }
+            }
+            if (grindResult.consumedTick()) {
+                return;
+            }
+            targetPos = grindResult.targetPos();
+        }
+
+        if (!perf) {
+            long tStepTrace = BotPerformanceMonitor.startStallPhase();
+            stepMovementCore(entry, targetPos, runAiTick);
+            BotPerformanceMonitor.recordStallPhase("step-movement-core", tStepTrace);
+        } else {
+            long tStepTail = System.nanoTime();
+            try { stepMovementCore(entry, targetPos, runAiTick); }
+            finally { BotPerformanceMonitor.record("step-movement-core", System.nanoTime() - tStepTail); }
+        }
+    }
+
+    /**
+     * Grind-mode decision pipeline. Returns a consumed result (caller returns immediately, any
+     * required movement already issued) or a fall-through result carrying the resolved targetPos
+     * for the shared stepMovementCore tail. Single source of truth shared by the perf and non-perf
+     * dispatch arms in the bot tick.
+     */
+    /** Walk to a held idle anchor, or stand still once arrived (no re-wander). Shared by idle-leech
+     *  and in-session breaks so idlers settle at distinct, stable spots instead of drifting/stacking. */
+    private LocalOpportunityAttackResult walkToOrIdleAt(BotEntry entry, Character bot, Point botPos,
+            Point anchor, boolean runAiTick) {
+        if (anchor == null || isNear(botPos, anchor, BotMovementManager.cfg.STOP_DIST)) {
+            if (entry.climbing && BotPhysicsEngine.climbableAtPoint(bot.getMap(), botPos) != null) {
+                BotPhysicsEngine.holdClimb(entry, bot);
+            } else {
+                BotPhysicsEngine.idleOnGround(entry, bot);
+            }
+            BotMovementManager.broadcastMovement(entry);
+            return new LocalOpportunityAttackResult(true, botPos);
+        }
+        stepMovementCore(entry, anchor, runAiTick);
+        return new LocalOpportunityAttackResult(true, anchor);
+    }
+
+    /** A PQ owns the intent, but shares the normal target/attack/movement implementation. */
+    void tickPqGrinding(BotEntry entry, Character bot, boolean runAiTick) {
+        entry.grinding = true;
+        var result = tickGrindMode(entry, bot, bot.getPosition(), bot.getPosition(), runAiTick);
+        if (!result.consumedTick()) stepMovementCore(entry, result.targetPos(), runAiTick);
+    }
+
+    private LocalOpportunityAttackResult tickGrindMode(BotEntry entry, Character bot, Point botPos,
+            Point targetPos, boolean runAiTick) {
+        // Low-HP rest (no-pot survival): a broke bot out of HP pots parks on a safe no-grind spot to
+        // passive-regen instead of grinding itself to death. Same park machinery as idle-leech below
+        // (walkToOrIdleAt idles standing, which earns the standing-still HP regen bonus). Checked first
+        // so survival wins over leech/break.
+        if (BotAutopilotManager.updateHpRest(entry, bot)) {
+            entry.grindTarget = null;
+            if (entry.hpRestAnchor == null) {
+                entry.hpRestAnchor = resolveSafeIdleRegion(entry, bot, botPos, false); // survival: safest region
+            }
+            return walkToOrIdleAt(entry, bot, botPos, entry.hpRestAnchor, runAiTick);
+        }
+        // Party level-gap idle-leech: a member that has out-levelled the cohort stops dealing damage
+        // and parks on a safe no-grind spot so the lower bots become the damage-dealers and keep full
+        // exp share. Reuses the existing no-target idle resolver; no attack/target search runs.
+        if (BotAutopilotManager.updateIdleLeech(entry, bot)) {
+            entry.grindTarget = null;
+            // Hit while parked (a mob wandered over, or a knockback shoved it into a danger region) ->
+            // abandon the spot so the line below re-resolves a safe one, instead of idling there and
+            // taking hits forever.
+            if (entry.leechIdleAnchor != null && bot.getHp() < entry.idleAnchorHp) {
+                entry.leechIdleAnchor = null;
+            }
+            // Pick a personal idle spot ONCE and hold it: re-resolving every tick made leechers drift
+            // and pile onto the same point. Independent one-shot in-region picks spread them out.
+            if (entry.leechIdleAnchor == null) {
+                entry.leechIdleAnchor = resolveIdleSpot(entry, bot, botPos); // SSOT idle-spot destack
+                entry.idleAnchorHp = bot.getHp(); // snapshot at the fresh spot; a later drop => got hit
+            }
+            // Rest in a chair while leeching (same hitbox as standing; a hit knocks it out of the chair
+            // via applyDamage, and the HP-drop check above then relocates it to a fresh safe spot).
+            boolean leechSettled = !entry.inAir && !entry.climbing
+                    && isNear(botPos, entry.leechIdleAnchor, BotMovementManager.cfg.STOP_DIST);
+            if (leechSettled && BotChairManager.tickIdleSit(entry, bot, System.currentTimeMillis())) {
+                return new LocalOpportunityAttackResult(true, botPos);
+            }
+            return walkToOrIdleAt(entry, bot, botPos, entry.leechIdleAnchor, runAiTick);
+        }
+        // In-session break: a personality-driven pause from grinding (managed bots only — non-managed
+        // profiles have breakFreqPerHour 0). Parks at a held spot like idle-leech, so it isn't farming
+        // 24/7. Pots/heals still run (potion tick); no attack/target search while on break.
+        long breakNow = System.currentTimeMillis();
+        // A party cohort breaks together (leader-driven, avg traits); only a solo bot self-rolls.
+        // Real-player takeover (@botme/@botparty) grinds all the time — no personality break/chill.
+        if (!isRealPlayerTakeover(entry) && !BotAutopilotManager.maybeStartGroupBreak(entry, bot)) {
+            BotBreakManager.maybeStartBreak(entry, bot, breakNow);
+        }
+        if (BotBreakManager.onBreak(entry, breakNow)) {
+            entry.grindTarget = null;
+            if (entry.breakIdleAnchor == null) {
+                entry.breakIdleAnchor = resolveIdleSpot(entry, bot, botPos); // SSOT idle-spot destack
+            }
+            // Once settled at the idle spot, maybe plop into a chair the bot owns instead of standing.
+            // Eligible on grind maps too: sitting doesn't change the touch hitbox (getBotTouchBounds is
+            // foot-position only), and a hit knocks the bot out of the chair back to normal physics
+            // (applyDamage). Held here so we skip the idle-move broadcast that fights the pose.
+            boolean settled = !entry.inAir && !entry.climbing
+                    && isNear(botPos, entry.breakIdleAnchor, BotMovementManager.cfg.STOP_DIST);
+            if (settled && BotChairManager.tickIdleSit(entry, bot, breakNow)) {
+                return new LocalOpportunityAttackResult(true, botPos);
+            }
+            return walkToOrIdleAt(entry, bot, botPos, entry.breakIdleAnchor, runAiTick);
+        } else if (entry.breakUntilMs != 0L) {
+            BotBreakManager.endBreak(entry, bot);   // break just elapsed -> clear + resume grind
+        }
+        // Mid-combat rope stall recovery: hung on a rope (no committed nav edge, no vertical
+        // progress) with a live hostile nearby -> dismount toward it. The nav layer never sees the
+        // combat target, so nothing else rescues this posture (stuck watchdog bails on climbing).
+        if (entry.climbing && cfg.CLIMB_COMBAT_RECOVERY_ENABLED && entry.navEdge == null) {
+            if (tickClimbCombatRecovery(entry, bot, botPos)) {
+                return new LocalOpportunityAttackResult(true, targetPos);
+            }
+        } else {
+            entry.climbStallSinceMs = 0;
+            entry.climbStallLastY = Integer.MIN_VALUE;
+        }
+        // Grind doctrine: keep the spot/archetype state fresh (map change, claim renewal, relocation
+        // patience). Cheap after the first tick on a map; shapes findGrindTarget below.
+        if (runAiTick) {
+            BotGrindDoctrine.update(entry, bot, System.currentTimeMillis());
+        }
+        double seekRangeSq = (double) BotCombatManager.cfg.GRIND_SEEK_RANGE * BotCombatManager.cfg.GRIND_SEEK_RANGE;
+        Monster target = entry.grindTarget;
+        if (target == null || !target.isAlive()
+                || target.getMap() != bot.getMap()
+                || target.getPosition().distanceSq(botPos) > seekRangeSq) {
+            target = null;
+        }
+        long now = System.currentTimeMillis();
+        BotCombatManager.AttackPlan attackPlan =
+                BotCombatManager.planAttackCadenced(entry, bot, target, runAiTick);
+        // Validate cached loot target
+        if (entry.grindLootTarget != null) {
+            MapItem loot = entry.grindLootTarget;
+            if (loot.isPickedUp() || bot.getMap().getMapObject(loot.getObjectId()) != loot) {
+                entry.grindLootTarget = null;
+            }
+        }
+        if (runAiTick && shouldSearchForGrindTarget(entry, bot, target, attackPlan, now)) {
+            Monster searchedTarget = entry.patrolRegionId >= 0
+                    ? BotCombatManager.findPatrolTarget(entry, bot)
+                    : BotCombatManager.findGrindTarget(entry, bot);
+            if (shouldSwitchToSearchedTarget(entry, bot, target, searchedTarget, attackPlan)) {
+                target = searchedTarget;
+                attackPlan = null;
+                // Commit to this pick for a few seconds so the bot actually travels to it instead of
+                // re-choosing a different far mob on the next retarget tick.
+                if (target != null) {
+                    entry.grindTargetCommitUntilMs = now + BotCombatManager.cfg.GRIND_TARGET_COMMIT_MS;
+                }
+            }
+            entry.nextGrindTargetSearchAtMs = now + BotCombatManager.cfg.GRIND_RETARGET_INTERVAL_MS;
+        }
+        // Search for a convenient loot drop every AI tick (grind mode only)
+        if (runAiTick && entry.patrolRegionId < 0) {
+            entry.grindLootTarget = BotInventoryManager.findNearestGrindLootTarget(entry, bot);
+        }
+        if (target == null) {
+            entry.grindTarget = null;
+            if (isSwimMap(entry) && entry.inAir) {
+                BotMovementManager.tickSwimming(entry, targetPos);
+                return new LocalOpportunityAttackResult(true, targetPos);
+            } else if (entry.inAir) {
+                BotMovementManager.tickAirborne(entry, targetPos);
+                return new LocalOpportunityAttackResult(true, targetPos);
+            } else {
+                // Patrol mode: prefer an opportunity shot over wandering. As long as we're
+                // standing inside our own patrol region, fire at any mob already in attack
+                // range — even one sitting outside the region — instead of idling. If a
+                // knockback pushed us out of the region, skip OA so the wander logic paths
+                // us back home first.
+                if (entry.patrolRegionId >= 0 && isBotInPatrolRegion(entry, bot, botPos)) {
+                    LocalOpportunityAttackResult oa = tryLocalOpportunityAttack(
+                            entry, bot, botPos, botPos, botPos, true, true, false);
+                    if (oa.consumedTick()) {
+                        return oa;
+                    }
+                    if (oa.targetPos() != botPos) {
+                        // OA found a mob but needs ranged spacing — move to the spacing point
+                        // instead of wandering.
+                        stepMovementCore(entry, oa.targetPos(), runAiTick);
+                        return new LocalOpportunityAttackResult(true, oa.targetPos());
+                    }
+                }
+                // No mob in seek range — pick a wander direction once and walk that way until
+                // a mob enters range. Beats standing still and lets the bot self-relocate.
+                if (entry.wanderDirection == 0) {
+                    entry.wanderDirection = java.util.concurrent.ThreadLocalRandom.current().nextBoolean() ? 1 : -1;
+                }
+                targetPos = new Point(botPos.x + entry.wanderDirection * 200, botPos.y);
+                // falls through to stepMovementCore below
+            }
+        }
+        if (target == null) {
+            targetPos = entry.patrolRegionId >= 0
+                    ? resolvePatrolWanderTarget(entry, botPos, bot.getMap())
+                    : resolveNoGrindTargetPosition(entry, botPos, bot.getMap());
+            stepMovementCore(entry, targetPos, runAiTick);
+            return new LocalOpportunityAttackResult(true, targetPos);
+        }
+        entry.grindTarget = target;
+        entry.wanderDirection = 0;
+        entry.patrolWanderTarget = null;
+        Point tp = target.getPosition();
+        Monster rangedPriorityTarget = selectPriorityRangedAttackTarget(entry, bot, botPos, target, attackPlan);
+        if (rangedPriorityTarget != null && rangedPriorityTarget != target) {
+            target = rangedPriorityTarget;
+            entry.grindTarget = rangedPriorityTarget;
+            tp = target.getPosition();
+            attackPlan = null;
+        }
+        // Crowding swap: if a closer mob is breaching the retreat band, attack THAT mob
+        // instead of fleeing the original far target. The bot would have retreated either
+        // way (the close mob also triggers retreat), but with the right target our shots
+        // land on the actual threat instead of pointing at the far one.
+        server.life.Monster closerThreat = rangedPriorityTarget == null
+                ? BotAttackExecutionProvider.findCloserThreatMob(bot, botPos, tp)
+                : null;
+        if (closerThreat != null && closerThreat != target) {
+            target = closerThreat;
+            entry.grindTarget = closerThreat;
+            tp = target.getPosition();
+            attackPlan = null;
+        }
+        if (attackPlan == null) {
+            attackPlan = BotCombatManager.planAttackCadenced(entry, bot, target, runAiTick);
+        }
+        WeaponType grindWeaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        // Proactive self-preservation: while HP is still healthy, disengage a touch-dangerous mob
+        // instead of trading hits with it (the reactive heal path owns the low-HP response). Held
+        // with jittered hysteresis so the bot commits to backing off rather than flip-flopping.
+        // Drives BOTH the attack gate (stop firing/swinging) and the retreat positioning below,
+        // reusing the existing retreat/re-spacing machinery rather than new movement code.
+        boolean proactiveDangerRetreat = computeProactiveDangerRetreat(entry, bot, target, now);
+        // Out of ammo with no way to refill right now: the basic attack falls back to a degenerate
+        // close-range swing (claw punch / point-blank shot), so the bot must CLOSE on the mob, not
+        // hold ranged spacing. Suppress the spacing retreat (danger retreat below still applies) so
+        // the swing can land. Lets a truly-broke bot farm its way back to affording ammo.
+        boolean noAmmoMelee = BotShopManager.isOutOfUsableAmmo(bot);
+        boolean targetInDegenerateBand = BotAttackExecutionProvider.shouldDegenerateRangedAttack(grindWeaponType, botPos, tp);
+        // Spacing retreat is a horizontal-ground maneuver — you cannot open distance while clinging
+        // to a rope, and trying to sends the bot climbing DOWN away from a mob sitting on top of the
+        // rope, then back up: endless oscillation. While climbing, never space-retreat; finish the
+        // climb and fight on the platform (danger-retreat still applies — flee a lethal mob anywhere).
+        // Hysteretic band (enter 80px / exit 140px) keyed on the prior-tick spacing state, to stop the
+        // edge chatter. Read-only here; the movement path (selectGrindNavigationTarget, same tick, same
+        // target) writes entry.spacingRetreatActive, so gate and movement agree on one prior value.
+        boolean rangedSpacingCrowded = !entry.climbing && !noAmmoMelee
+                && BotAttackExecutionProvider.isInSpacingRetreatBand(entry.spacingRetreatActive, grindWeaponType, botPos, tp);
+        // Anti-freeze: a spacing retreat that never opens distance (mob chases, blocked nav) loops
+        // forever with the gate shut. Shared give-up watchdog forces a fight window — same escape
+        // hatch the danger-retreat uses (see RetreatGiveUp).
+        boolean rangedSpacingGaveUp = !proactiveDangerRetreat && entry.spacingGiveUp.forcedFight(
+                rangedSpacingCrowded, now, MAX_RANGED_SPACING_RETREAT_MS, RANGED_SPACING_RETREAT_SUPPRESS_MS);
+        boolean allowOneDegenerateAttack = targetInDegenerateBand
+                && (!entry.degenAttackDone || rangedSpacingGaveUp) && rangedPriorityTarget == null
+                && !proactiveDangerRetreat;
+        boolean shouldRetreatForRangedSpacing = proactiveDangerRetreat
+                || (!noAmmoMelee && !rangedSpacingGaveUp
+                && (entry.degenAttackDone
+                || (rangedSpacingCrowded && !allowOneDegenerateAttack)));
+        // Opportunity attack: keep firing during retreat as long as the shot would land
+        // as a true ranged hit. Suppress only inside the degenerate band, since firing
+        // there would re-trigger degenAttackDone and extend the retreat indefinitely.
+        boolean canFireWithoutDegen = grindWeaponType == null
+                || !BotAttackExecutionProvider.shouldDegenerateRangedAttack(grindWeaponType, botPos, tp);
+        // A proactive danger-retreat hard-closes the gate: continuing to fire/swing keeps the bot in
+        // contact range trading touch damage, which is exactly what we are disengaging from.
+        boolean attackGateOpen = !proactiveDangerRetreat
+                && (!shouldRetreatForRangedSpacing || canFireWithoutDegen || allowOneDegenerateAttack);
+        // Sticky cross-region retreat: pre-compute so an opportunity attack doesn't stall
+        // the traversal — bot fires AND keeps walking toward the safe vantage in the same tick.
+        Point crossRegionRetreatPos = shouldRetreatForRangedSpacing
+                ? selectCrossRegionRetreatTarget(entry, botPos, tp)
+                : null;
+        // Debug snapshot for the path log — why the attack gate is open/closed this tick.
+        entry.dbgCombatDecisionAtMs = now;
+        entry.dbgAttackGateOpen = attackGateOpen;
+        entry.dbgProactiveDangerRetreat = proactiveDangerRetreat;
+        entry.dbgRangedSpacingRetreat = shouldRetreatForRangedSpacing;
+        entry.dbgInDegenBand = targetInDegenerateBand;
+        entry.dbgCrossRegionRetreat = crossRegionRetreatPos != null;
+        entry.dbgRangedSpacingGaveUp = rangedSpacingGaveUp;
+        entry.dbgRangedSpacingCrowded = rangedSpacingCrowded;
+        // AoE positioning: when in range but the chosen plan is single-target, defer the shot
+        // and walk into the cluster centroid if the AoE would beat it on DPS there (bounded).
+        // Suppressed during ranged-spacing/cross-region retreats — spacing takes priority.
+        Point aoeRepositionPos = (!shouldRetreatForRangedSpacing && crossRegionRetreatPos == null
+                && attackGateOpen && BotCombatManager.isTargetInAttackRange(attackPlan, bot, target))
+                ? resolveAoeReposition(entry, bot, target, attackPlan, botPos)
+                : null;
+
+        boolean attackAttemptedInRange = false;
+        if (!entry.climbing) {
+            if (aoeRepositionPos == null
+                    && attackGateOpen && BotCombatManager.isTargetInAttackRange(attackPlan, bot, target)
+                    && BotCombatManager.canUseAttackPlanNow(entry, grindWeaponType, attackPlan)) {
+                // Class-aware engage feel: a thief engagement can open with a hop — the attack then
+                // lands mid-air on the next tick via the existing ascent-attack path. Away-hops
+                // (mini-kite) are land-checked inside engageHopDx.
+                if (!entry.inAir && crossRegionRetreatPos == null
+                        && BotCombatManager.shouldEngageHop(entry, bot, target, now)) {
+                    entry.engageHopPlanned = false;
+                    BotMovementManager.initiateJump(entry, bot, BotCombatManager.engageHopDx(bot, botPos, tp));
+                    recordCombatPathTick(entry, targetPos, true, runAiTick);
+                    return new LocalOpportunityAttackResult(true, targetPos);
+                }
+                attackAttemptedInRange = true;
+                // In range — attack if grounded, or during ascent of a jump
+                int prevCooldown = entry.attackCooldownMs;
+                BotCombatManager.attackMonster(entry, bot, attackPlan);
+                boolean attacked = entry.attackCooldownMs != prevCooldown;
+                if (attacked) {
+                    BotGrindDoctrine.markProgress(entry, now); // spot is producing
+                }
+                // If a ranged bot just did a degenerate close-range hit, force retreat next tick
+                if (attacked && attackPlan.isCloseRangeRoute()
+                        && BotCombatManager.isRangedAmmoWeapon(grindWeaponType)) {
+                    entry.degenAttackDone = true;
+                }
+                // Don't short-circuit when a cross-region retreat is in progress — the
+                // bot must still walk to the edge launch this tick.
+                if (attacked && !entry.inAir && crossRegionRetreatPos == null) {
+                    recordCombatPathTick(entry, targetPos, true, runAiTick);
+                    return new LocalOpportunityAttackResult(true, targetPos);
+                }
+            } else if (!entry.inAir
+                    && attackPlan != null
+                    && BotCombatManager.isTargetJumpable(entry.movementProfile, attackPlan.isCloseRangeRoute(), botPos, tp)
+                    && grindWeaponType != WeaponType.BOW && grindWeaponType != WeaponType.CROSSBOW
+                    && grindWeaponType != WeaponType.WAND && grindWeaponType != WeaponType.STAFF) {
+                // Target is above but within jump height — jump toward it
+                BotMovementManager.initiateJump(entry, bot, tp.x - botPos.x);
+                recordCombatPathTick(entry, targetPos, true, runAiTick);
+                return new LocalOpportunityAttackResult(true, targetPos);
+            }
+        }
+        // Stand still when in attack range and no retreat is needed. Walking toward the
+        // mob during cooldown drops dx into the retreat band, triggering a walk-away the
+        // next tick — produces a tight (~100 ms) left-right oscillation when the bot is
+        // already in firing position.
+        if (target != null && !entry.inAir && !entry.climbing
+                && !shouldRetreatForRangedSpacing && crossRegionRetreatPos == null
+                && aoeRepositionPos == null
+                && !attackAttemptedInRange
+                && BotCombatManager.isTargetInAttackRange(attackPlan, bot, target)) {
+            BotPhysicsEngine.idleOnGround(entry, bot);
+            BotMovementManager.broadcastMovement(entry);
+            recordCombatPathTick(entry, targetPos, true, runAiTick);
+            return new LocalOpportunityAttackResult(true, targetPos);
+        }
+        // Retreat positioning is a local combat adjustment, not an inter-region path target.
+        // Feeding a synthetic same-Y retreat point into nav while the monster is elsewhere
+        // can make rope/ladder bots path back onto the nearby foothold instead of toward
+        // the monster's actual region.
+        targetPos = crossRegionRetreatPos != null
+                ? crossRegionRetreatPos
+                : aoeRepositionPos != null
+                ? selectGrindNavigationTarget(entry, botPos, aoeRepositionPos)
+                : selectGrindNavigationTarget(entry, botPos, tp, shouldRetreatForRangedSpacing, proactiveDangerRetreat, true);
+        // Clear only once the bot has physically left the retreat zone, not after the
+        // first retreat tick — otherwise the flag resets while the bot is still overlapping
+        // and allowOneDegenerateAttack re-opens the attack gate next tick.
+        if (entry.degenAttackDone
+                && !BotAttackExecutionProvider.shouldRetreatFromNearbyTarget(grindWeaponType, botPos, tp)) {
+            entry.degenAttackDone = false;
+        }
+        // Small detour: take a very close loot drop on the way when not retreating.
+        if (crossRegionRetreatPos == null && !shouldRetreatForRangedSpacing
+                && aoeRepositionPos == null && entry.patrolRegionId < 0) {
+            Point lootPos = convenientLootTarget(entry, botPos, tp);
+            if (lootPos != null) targetPos = lootPos;
+        }
+        return new LocalOpportunityAttackResult(false, targetPos);
+    }
+
+    /**
+     * Rope-stall recovery (grind mode): clinging with no committed nav edge and no vertical progress
+     * for CLIMB_STALL_MS while a live hostile waits nearby -> dismount toward it (legal jump-off, no
+     * snapping). Deliberate nav climbs (navEdge != null) are excluded by the caller — the route
+     * driver owns those. Returns true when the dismount fired (tick consumed).
+     */
+    private boolean tickClimbCombatRecovery(BotEntry entry, Character bot, Point botPos) {
+        long now = System.currentTimeMillis();
+        if (entry.climbStallLastY == Integer.MIN_VALUE
+                || Math.abs(botPos.y - entry.climbStallLastY) >= cfg.CLIMB_STALL_PROGRESS_EPS) {
+            entry.climbStallSinceMs = now;
+            entry.climbStallLastY = botPos.y;
+            return false;
+        }
+        if (now - entry.climbStallSinceMs < cfg.CLIMB_STALL_MS) {
+            return false;
+        }
+        Monster target = entry.grindTarget;
+        if (target == null || !target.isAlive() || target.getMap() != bot.getMap()) {
+            target = BotCombatManager.findFollowAttackTarget(entry, bot); // local scan, no chase
+        }
+        if (target == null || target.getPosition() == null) {
+            return false; // nothing to fight — leave the posture to the nav layer
+        }
+        int dx = target.getPosition().x - botPos.x;
+        if (dx == 0) {
+            dx = bot.isFacingLeft() ? -1 : 1;
+        }
+        BotMovementManager.jumpOffRope(entry, bot, dx);
+        entry.climbStallSinceMs = 0;
+        entry.climbStallLastY = Integer.MIN_VALUE;
+        return true;
+    }
+
+    private void recordCombatPathTick(BotEntry entry, Point targetPos, boolean consumedTick, boolean runAiTick) {
+        if (entry.pathLogger == null || entry.bot == null || entry.bot.getMap() == null) {
+            return;
+        }
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(entry.bot.getMap(), entry.movementProfile);
+        int regionId = graph != null
+                ? BotNavigationManager.resolveCurrentRegionId(graph, entry, entry.bot.getMap(), entry.bot.getPosition())
+                : -1;
+        entry.pathLogger.record(entry, captureTargetSnapshot(entry), regionId, consumedTick, runAiTick);
+    }
+
+    private void handleBotTickFailure(BotEntry entry, int ownerCharId, int botCharId, Throwable t) {
+        if (entry == null) {
+            log.error("Bot tick failed for missing entry ownerCharId={} botCharId={}", ownerCharId, botCharId, t);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - entry.tickFailureWindowStartedAtMs > BOT_TICK_FAILURE_WINDOW_MS) {
+            entry.tickFailureWindowStartedAtMs = now;
+            entry.tickFailureCount = 0;
+        }
+        entry.tickFailureCount++;
+
+        Character bot = entry.bot;
+        Character owner = entry.owner;
+        String botName = bot != null ? bot.getName() : "?";
+        String ownerName = owner != null ? owner.getName() : "?";
+        int mapId = bot != null ? bot.getMapId() : -1;
+
+        clearBotVolatileActions(entry);
+        if (entry.tickFailureCount >= BOT_TICK_FAILURE_LIMIT) {
+            log.error("Disabling bot '{}' after {} tick failures within {} ms (owner={}, map={}, grinding={}, following={})",
+                    botName, entry.tickFailureCount, BOT_TICK_FAILURE_WINDOW_MS, ownerName, mapId,
+                    entry.grinding, entry.following, t);
+            removeBotByCharId(botCharId, "tick-failure disable");
+            // Entry removal alone leaves the character online as an untickable zombie (observed:
+            // DAGGERSTRAND) — take it out of the world too; the scheduler can respawn it clean.
+            if (bot != null && bot.getClient() != null) {
+                bot.getClient().forceDisconnect();
+            }
+            return;
+        }
+
+        if (entry.tickFailureCount == 2) {
+            forceBotIdleAfterTickFailure(entry);
+        }
+
+        log.warn("Bot '{}' tick failed {}/{} (owner={}, map={}, grinding={}, following={})",
+                botName, entry.tickFailureCount, BOT_TICK_FAILURE_LIMIT, ownerName, mapId,
+                entry.grinding, entry.following, t);
+    }
+
+    private static void resetBotTickFailures(BotEntry entry) {
+        if (entry == null || entry.tickFailureCount == 0) {
+            return;
+        }
+        entry.tickFailureCount = 0;
+        entry.tickFailureWindowStartedAtMs = 0L;
+    }
+
+    private static void clearBotVolatileActions(BotEntry entry) {
+        entry.pendingAction = null;
+        entry.pendingDropCategory = null;
+        entry.grindTarget = null;
+        entry.grindLootTarget = null;
+        entry.patrolWanderTarget = null;
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+    }
+
+    private void forceBotIdleAfterTickFailure(BotEntry entry) {
+        issueStop(entry);
+        try {
+            botReply(entry, "unrecoverable error caught, idling");
+        } catch (Throwable chatError) {
+            Character bot = entry.bot;
+            log.warn("Failed to send bot failure idle message for '{}'",
+                    bot != null ? bot.getName() : "?", chatError);
+        }
+    }
+
+    static Monster selectPriorityRangedAttackTarget(BotEntry entry,
+                                                   Character bot,
+                                                   Point botPos,
+                                                   Monster preferredTarget) {
+        return selectPriorityRangedAttackTarget(entry, bot, botPos, preferredTarget, null);
+    }
+
+    static Monster selectPriorityRangedAttackTarget(BotEntry entry,
+                                                   Character bot,
+                                                   Point botPos,
+                                                   Monster preferredTarget,
+                                                   BotCombatManager.AttackPlan preferredPlan) {
+        if (entry == null || entry.noAmmo || bot == null || botPos == null) {
+            return null;
+        }
+
+        WeaponType weaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        if (!BotCombatManager.isRangedAmmoWeapon(weaponType)) {
+            return null;
+        }
+        if (isNonDegenerateRangedAttackTarget(entry, bot, botPos, weaponType, preferredTarget, preferredPlan)) {
+            return preferredTarget;
+        }
+
+        Monster best = null;
+        double bestDistanceSq = Double.MAX_VALUE;
+        for (Monster candidate : bot.getMap().getAllMonsters()) {
+            if (candidate == preferredTarget) {
+                continue;
+            }
+            if (!isNonDegenerateRangedAttackTarget(entry, bot, botPos, weaponType, candidate, null)) {
+                continue;
+            }
+            double distanceSq = candidate.getPosition().distanceSq(botPos);
+            if (distanceSq < bestDistanceSq) {
+                bestDistanceSq = distanceSq;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private static boolean isNonDegenerateRangedAttackTarget(BotEntry entry,
+                                                            Character bot,
+                                                            Point botPos,
+                                                            WeaponType weaponType,
+                                                            Monster target,
+                                                            BotCombatManager.AttackPlan knownPlan) {
+        if (target == null || !target.isAlive()) {
+            return false;
+        }
+        Point targetPos = target.getPosition();
+        if (BotAttackExecutionProvider.shouldDegenerateRangedAttack(weaponType, botPos, targetPos)) {
+            return false;
+        }
+        if (knownPlan == null
+                && !BotCombatManager.mayHaveNonDegenerateRangedReach(entry, bot, botPos, weaponType, target)) {
+            return false;
+        }
+        BotCombatManager.AttackPlan plan = knownPlan != null ? knownPlan : BotCombatManager.planAttack(entry, bot, target);
+        return plan != null
+                && plan.route == BotCombatManager.AttackRoute.RANGED
+                && BotCombatManager.isTargetInAttackRange(plan, bot, target)
+                && BotCombatManager.canUseAttackPlanNow(entry, weaponType, plan);
+    }
+
+    private void tickAnchoredFarm(BotEntry entry, Character bot, Point botPos, boolean runAiTick) {
+        if (entry.farmAnchor == null || entry.farmAnchorMapId != bot.getMapId()) {
+            clearFarmAnchorOnMapChange(entry, bot);
+            tickIdleEntry(entry, bot);
+            return;
+        }
+        loiterAtAnchor(entry, bot, botPos, new Point(entry.farmAnchor), runAiTick);
+    }
+
+    /**
+     * Hold a fixed spot and opportunity-attack: fire at any mob already in attack range
+     * (no chasing — {@code false, false}), otherwise walk back toward {@code anchor} and idle
+     * within 8px of it. Shared by the "farm this spot" command (BotEntry.farmAnchor) and the
+     * party-cohesion portal-anchored wait, so both loiter identically without a target re-impl.
+     */
+    void loiterAtAnchor(BotEntry entry, Character bot, Point botPos, Point anchor, boolean runAiTick) {
+        if (runAiTick) {
+            LocalOpportunityAttackResult attackResult = tryLocalOpportunityAttack(
+                    entry, bot, botPos, anchor, anchor, false, false, false);
+            if (attackResult.consumedTick()) {
+                return;
+            }
+        }
+
+        if (isNear(botPos, anchor, 8) && !entry.inAir && !entry.climbing) {
+            entry.moveTarget = null;
+            entry.moveTargetPrecise = false;
+            BotPhysicsEngine.idleOnGround(entry, bot);
+            BotMovementManager.broadcastMovement(entry);
+            return;
+        }
+
+        entry.moveTarget = anchor;
+        entry.moveTargetPrecise = true;
+        entry.moveTargetSource = "script-task";
+        stepMovementCore(entry, anchor, runAiTick);
+    }
+
+    private static boolean shouldUseScriptedMoveLocalCombat(BotEntry entry, Point targetPos) {
+        if (entry == null || targetPos == null || entry.activeScriptTask == null) {
+            return false;
+        }
+        if (entry.activeScriptTask.type != BotTask.Type.MOVE_TO
+                || entry.activeScriptTask.moveCombatMode != BotTask.MoveCombatMode.LOCAL_OPPORTUNITY) {
+            return false;
+        }
+        if (entry.moveTarget == null || !entry.moveTarget.equals(entry.activeScriptTask.point)) {
+            return false;
+        }
+        return !entry.following;
+    }
+
+    /**
+     * Fire-in-passing attack for autopilot travel: hits a mob ONLY if it's already in attack range
+     * while the bot is grounded, with no combat repositioning and no jump-chase, so it never diverts
+     * the walk to the portal. Reuses the follow/grind opportunity-attack SSOT ({@link #tryLocalOpportunityAttack});
+     * target selection (findFollowAttackTarget) keeps it to a mob right in the lane, not a detour.
+     */
+    boolean tryEnRouteOpportunityAttack(BotEntry entry, Character bot) {
+        if (entry == null || bot == null || entry.noAmmo || entry.inAir || entry.climbing) {
+            return false;
+        }
+        if (entry.operatorCmd == BotEntry.OperatorCmd.MOVE) {
+            return false; // operator "Move" (quiet): travel without fighting; "Move+attack" (MOVE_ATTACK) does
+        }
+        Point botPos = bot.getPosition();
+        if (botPos == null) {
+            return false;
+        }
+        return tryLocalOpportunityAttack(entry, bot, botPos, botPos, botPos, false, false, true).consumedTick();
+    }
+
+    private LocalOpportunityAttackResult tryLocalOpportunityAttack(BotEntry entry,
+                                                                  Character bot,
+                                                                  Point botPos,
+                                                                  Point movementTargetPos,
+                                                                  Point moveWindowReferencePos,
+                                                                  boolean allowCombatMovement,
+                                                                  boolean allowJumpTowardTarget,
+                                                                  boolean enRouteGate) {
+        Point targetPos = movementTargetPos;
+        // entry.idleLeech: party level-gap idle-leech suppresses ALL damage, including opportunity
+        // shots, so the over-levelled member truly drops out of the exp-share interval.
+        if (entry.noAmmo || bot == null || botPos == null || entry.idleLeech) {
+            return new LocalOpportunityAttackResult(false, targetPos);
+        }
+
+        Monster localTarget = BotCombatManager.findFollowAttackTarget(entry, bot);
+        if (localTarget == null) {
+            return new LocalOpportunityAttackResult(false, targetPos);
+        }
+
+        Point localTargetPos = localTarget.getPosition();
+        WeaponType weaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        boolean shouldRetreat = allowCombatMovement
+                && (entry.degenAttackDone
+                || BotAttackExecutionProvider.shouldRetreatFromNearbyTarget(weaponType, botPos, localTargetPos)
+                || BotAttackExecutionProvider.isAnyMobNearerThanTarget(bot, botPos, localTargetPos));
+        if (shouldRetreat) {
+            entry.degenAttackDone = false;
+            return new LocalOpportunityAttackResult(
+                    false, selectGrindNavigationTarget(entry, botPos, localTargetPos));
+        }
+
+        BotCombatManager.AttackPlan attackPlan = BotCombatManager.planAttack(entry, bot, localTarget);
+        if (attackPlan == null) {
+            return new LocalOpportunityAttackResult(false, targetPos);
+        }
+        // En-route only: don't burn travel time whaling on a mob we can't promptly kill (too tanky,
+        // or accuracy too low to land hits). Grind/follow/patrol/loiter callers aren't gated.
+        if (enRouteGate && !BotCombatManager.isEnRouteAttackWorthwhile(entry, bot, attackPlan, localTarget)) {
+            return new LocalOpportunityAttackResult(false, targetPos);
+        }
+        if (entry.inAir) {
+            if (BotCombatManager.canUseAttackPlanNow(entry, weaponType, attackPlan)
+                    && BotCombatManager.isTargetInAttackRange(attackPlan, bot, localTarget)) {
+                BotCombatManager.attackMonster(entry, bot, attackPlan);
+                if (allowCombatMovement && attackPlan.isCloseRangeRoute()
+                        && BotCombatManager.isRangedAmmoWeapon(weaponType)) {
+                    entry.degenAttackDone = true;
+                }
+            }
+            return new LocalOpportunityAttackResult(false, targetPos);
+        }
+
+        if (allowJumpTowardTarget
+                && weaponType != WeaponType.BOW && weaponType != WeaponType.CROSSBOW
+                && weaponType != WeaponType.WAND && weaponType != WeaponType.STAFF
+                && BotCombatManager.isTargetJumpable(entry.movementProfile, true, botPos, localTargetPos)) {
+            BotMovementManager.initiateJump(entry, bot, localTargetPos.x - botPos.x);
+            return new LocalOpportunityAttackResult(true, targetPos);
+        }
+
+        if (entry.moveWindowMs <= 0 && BotCombatManager.isTargetInAttackRange(attackPlan, bot, localTarget)) {
+            BotCombatManager.attackMonster(entry, bot, attackPlan);
+            setLocalAttackMoveWindow(entry, botPos, moveWindowReferencePos);
+            if (allowCombatMovement && attackPlan.isCloseRangeRoute()
+                    && BotCombatManager.isRangedAmmoWeapon(weaponType)) {
+                entry.degenAttackDone = true;
+            }
+            return new LocalOpportunityAttackResult(!entry.inAir, targetPos);
+        }
+
+        return new LocalOpportunityAttackResult(false, targetPos);
+    }
+
+    private static void setLocalAttackMoveWindow(BotEntry entry, Point botPos, Point referencePos) {
+        if (botPos == null || referencePos == null) {
+            entry.moveWindowMs = 0;
+            return;
+        }
+        int dx = Math.abs(botPos.x - referencePos.x);
+        entry.moveWindowMs = dx > BotMovementManager.cfg.FOLLOW_DIST * 3 ? 1000
+                           : dx > BotMovementManager.cfg.FOLLOW_DIST     ? 200
+                           : 0;
+        clearActionMoveWindowIfSettled(entry, botPos, referencePos);
+    }
+
+    private static void clearFollowActionMoveWindowIfSettled(BotEntry entry,
+                                                             Point botPos,
+                                                             TargetSnapshot targetSnapshot) {
+        if (entry == null || !entry.following || targetSnapshot == null) {
+            return;
+        }
+        clearActionMoveWindowIfSettled(entry, botPos, targetSnapshot.followTargetPos());
+    }
+
+    private static void clearActionMoveWindowIfSettled(BotEntry entry,
+                                                       Point botPos,
+                                                       Point targetPos) {
+        if (entry == null || entry.moveWindowMs <= 0 || botPos == null || targetPos == null) {
+            return;
+        }
+
+        int followStopBand = Math.max(BotMovementManager.cfg.STOP_DIST, BotMovementManager.cfg.FOLLOW_DIST);
+        if (Math.abs(botPos.x - targetPos.x) <= followStopBand
+                && Math.abs(botPos.y - targetPos.y) <= BotMovementManager.cfg.FOLLOW_Y_CAP) {
+            entry.moveWindowMs = 0;
+        }
+    }
+
+    private Character resolveTickOwner(BotEntry entry, int ownerCharId) {
+        Character owner = entry.owner;
+        if (owner == null || owner.getId() != ownerCharId || !owner.isLoggedinWorld()) {
+            owner = Server.getInstance()
+                    .getWorld(entry.bot.getWorld())
+                    .getPlayerStorage()
+                    .getCharacterById(ownerCharId);
+            entry.owner = owner;
+        }
+        return owner;
+    }
+
+    /**
+     * If the owner has been offline or dead for >= 5 minutes, scroll/warp the
+     * bot to the nearest town and idle there. Prevents pot drain, death-loops
+     * with no anchor, and silent grinding while the owner is unable to leech.
+     *
+     * Returns true when a town warp was performed this tick (caller should
+     * short-circuit; map-change reset runs on the next tick).
+     */
+    private boolean handleOwnerOfflineOrDead(BotEntry entry, Character bot, Character owner, long nowMs, int ownerCharId) {
+        // Registered expeditions own resurrection and ordinary NPC exits. The generic
+        // five-minute owner-away town warp must not pull their crew out of the instance.
+        if (BotZakumBattle.inInstance(bot) && BotZakumBattle.belongsTo(bot, ownerCharId)
+                || BotCarnivalRun.belongsTo(bot, ownerCharId) || BotEllinRun.belongsTo(bot, ownerCharId) || BotMagatiaRun.belongsTo(bot, ownerCharId)) {
+            entry.ownerOfflineOrDeadSinceMs = 0;
+            return false;
+        }
+        boolean inactive = (owner == null) || (owner.getHp() <= 0);
+
+        if (!inactive) {
+            if (entry.ownerAwaySafeMode && entry.ownerOfflineOrDeadSinceMs == 0) {
+                return false;
+            }
+            if (entry.ownerOfflineOrDeadSinceMs != 0 || entry.ownerReturnedToTown) {
+                boolean justReturnedFromTown = entry.ownerReturnedToTown;
+                entry.ownerOfflineOrDeadSinceMs = 0;
+                entry.ownerReturnedToTown = false;
+                entry.ownerAwaySafeMode = false;
+                // Cancel any in-flight cluster walk: while owner was offline the
+                // only setter of moveTarget was the offline-town path, so clearing
+                // here is safe and avoids stale state when owner reconnects.
+                entry.moveTarget = null;
+                entry.moveTargetPrecise = false;
+                // Race-safe single-representative wb: each bot tries to remove the
+                // group's anchor entry; only the winner (first to observe owner
+                // active) speaks. Other bots find the anchor already cleared and
+                // skip the announcement, so the party sees one wb line, not N.
+                Point removedAnchor = townClusterAnchors.remove(ownerCharId);
+                if (justReturnedFromTown && removedAnchor != null) {
+                    BotChatManager.announceOwnerReturnedFromOffline(entry);
+                }
+            }
+            return false;
+        }
+
+        if (entry.ownerReturnedToTown) {
+            if (entry.ownerAwaySafeMode && entry.ownerOfflineOrDeadSinceMs == 0) {
+                entry.ownerOfflineOrDeadSinceMs = nowMs;
+            }
+            return false;
+        }
+
+        if (entry.ownerOfflineOrDeadSinceMs == 0) {
+            entry.ownerOfflineOrDeadSinceMs = nowMs;
+            return false;
+        }
+
+        // Normal bots take the town safe mode after 5 min. A bot the owner explicitly ordered
+        // independent (autopilot) keeps playing until the hard offline limit, then stops too.
+        long inactiveLimitMs = BotAutopilotManager.isActive(entry)
+                ? cfg.AUTOPILOT_OWNER_OFFLINE_LIMIT_MS
+                : cfg.OWNER_INACTIVE_TOWN_RETURN_MS;
+        if (nowMs - entry.ownerOfflineOrDeadSinceMs < inactiveLimitMs) {
+            return false;
+        }
+
+        return enterOwnerInactiveSafeMode(entry, bot, ownerCharId, shouldTownWarpForOwnerInactive(entry));
+    }
+
+    private boolean shouldTownWarpForOwnerInactive(BotEntry entry) {
+        MapleMap currentMap = entry != null && entry.bot != null ? entry.bot.getMap() : null;
+        return currentMap != null
+                && currentMap.getAllMonsters().stream().anyMatch(Monster::isAlive)
+                && canReturnToDifferentMap(currentMap);
+    }
+
+    private static boolean canReturnToDifferentMap(MapleMap currentMap) {
+        if (currentMap == null) {
+            return false;
+        }
+        MapleMap returnMap = currentMap.getReturnMap();
+        return returnMap != null && returnMap.getId() != currentMap.getId();
+    }
+
+    static boolean shouldRetreatToReturnMap(MapleMap currentMap) {
+        return canReturnToDifferentMap(currentMap)
+                && (!currentMap.isTown()
+                        || currentMap.getAllMonsters().stream().anyMatch(Monster::isAlive));
+    }
+
+    public boolean shouldOfferTownForAwayCommand(BotEntry entry) {
+        return shouldTownWarpForOwnerInactive(entry);
+    }
+
+    public boolean isFirstBotEntry(BotEntry entry) {
+        return entry != null
+                && entry.owner != null
+                && getFirstBotEntry(entry.owner.getId()) == entry;
+    }
+
+    public void issueOwnerAwaySafeModeForOwner(int ownerCharId, boolean town) {
+        for (BotEntry entry : getBotEntries(ownerCharId)) {
+            if (entry.bot == null || entry.bot.getMap() == null) {
+                continue;
+            }
+            enterOwnerInactiveSafeMode(entry, entry.bot, ownerCharId,
+                    town && shouldTownWarpForOwnerInactive(entry));
+        }
+    }
+
+    private boolean enterOwnerInactiveSafeMode(BotEntry entry, Character bot, int ownerCharId, boolean town) {
+        prepareOwnerInactiveIdle(entry, ownerCharId);
+        if (town) {
+            return scrollBotToTown(entry, bot, ownerCharId);
+        }
+
+        BotPhysicsEngine.idleOnGround(entry, bot);
+        BotMovementManager.broadcastMovement(entry);
+        entry.ownerReturnedToTown = true;
+        return false;
+    }
+
+    private void prepareOwnerInactiveIdle(BotEntry entry, int ownerCharId) {
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        clearMode(entry);
+        entry.moveTarget = null;
+        entry.moveTargetPrecise = false;
+        entry.grindTarget = null;
+        entry.degenAttackDone = false;
+        entry.buffConsumablesEnabled = false;
+        entry.ownerAwaySafeMode = true;
+    }
+
+    private boolean scrollBotToTown(BotEntry entry, Character bot, int ownerCharId) {
+        MapleMap currentMap = bot.getMap();
+        if (currentMap == null) {
+            return false;
+        }
+        MapleMap returnMap = currentMap.getReturnMap();
+        if (returnMap == null || returnMap.getId() == currentMap.getId()) {
+            // No return map (e.g. some PQ/town maps): mark handled to avoid re-evaluating every tick.
+            entry.ownerReturnedToTown = true;
+            return false;
+        }
+
+        BotPhysicsEngine.idleOnGround(entry, bot);
+
+        // Every bot uses the same path: applyTo handles scroll-consume + random
+        // portal warp. Falls back to a plain changeMap when the bot has no scroll.
+        if (!tryUseReturnScroll(bot)) {
+            bot.changeMap(returnMap);
+        }
+        groundAfterMapChange(entry, bot);
+
+        // Capture the cluster anchor at the first bot's post-warp position, then let
+        // every bot walk to the deterministic formation slot around that anchor. This
+        // mirrors the owner's current follow formation instead of stacking everyone on
+        // the same portal landing point.
+        Point post = new Point(bot.getPosition());
+        Point anchor = townClusterAnchors.putIfAbsent(ownerCharId, post);
+        if (anchor == null) {
+            anchor = post;
+        }
+        Point target = resolveTownClusterTarget(entry, ownerCharId, returnMap, anchor);
+
+        BotMovementManager.resetEntryState(entry);
+        startMoveTo(entry, target, true);
+        entry.ownerReturnedToTown = true;
+        return true;
+    }
+
+    private Point resolveTownClusterTarget(BotEntry entry, int ownerCharId, MapleMap map, Point anchor) {
+        Point base = anchor != null ? new Point(anchor) : new Point(entry.bot.getPosition());
+        if (entry == null || entry.bot == null || map == null) {
+            return base;
+        }
+
+        List<BotEntry> entries = getBotEntries(ownerCharId);
+        int idx = 0;
+        for (int i = 0; i < entries.size(); i++) {
+            if (entries.get(i) == entry) {
+                idx = i;
+                break;
+            }
+        }
+
+        FormationState formation = ownerFormations.getOrDefault(ownerCharId, FormationState.defaultStagger());
+        int offsetX = formation.offsetFor(idx, Math.max(1, entries.size()));
+        int targetX = base.x + offsetX;
+
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekGraph(map, entry.movementProfile);
+        if (graph != null) {
+            int anchorRegionId = graph.findRegionId(map, base);
+            BotNavigationGraph.Region anchorRegion = graph.getRegion(anchorRegionId);
+            if (anchorRegion != null && !anchorRegion.isRopeRegion) {
+                int edgeMargin = PLATFORM_EDGE_INSET_PX;
+                int minX = anchorRegion.minX;
+                int maxX = anchorRegion.maxX;
+                if (maxX - minX > 2 * edgeMargin) {
+                    minX += edgeMargin;
+                    maxX -= edgeMargin;
+                }
+                int clampedX = Math.max(minX, Math.min(maxX, targetX));
+                return anchorRegion.pointAt(clampedX);
+            }
+        }
+
+        Rectangle area = map.getMapArea();
+        int minX = area != null ? area.x : targetX;
+        int maxX = area != null ? area.x + area.width : targetX;
+        if (map.getFootholds() != null && map.getFootholds().getMinDropX() < map.getFootholds().getMaxDropX()) {
+            minX = map.getFootholds().getMinDropX();
+            maxX = map.getFootholds().getMaxDropX();
+        }
+
+        int clampedX = Math.max(minX, Math.min(maxX, targetX));
+        Point ground = BotPhysicsEngine.findGroundPoint(map, new Point(clampedX, base.y - 1));
+        if (ground != null) {
+            return ground;
+        }
+
+        Point anchorGround = BotPhysicsEngine.findGroundPoint(map, new Point(base.x, base.y - 1));
+        return anchorGround != null ? anchorGround : base;
+    }
+
+    /**
+     * Public hook: tell a bot to walk to a fixed point using the same field and
+     * pipeline as the player "here" command. No owner reference required, so it
+     * works for bots whose owner is offline (e.g. owner-inactive town clustering)
+     * as well as any future code-driven "go here" feature.
+     *
+     * Movement runs through the regular tick when the owner is online, and
+     * through tickStandaloneMoveTarget when the owner is offline. Arrival is
+     * detected by the existing clearReachedMoveTarget logic.
+     */
+    public void issueMoveTo(BotEntry entry, Point dest, boolean precise) {
+        if (entry == null || dest == null) {
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startMoveTo(entry, dest, precise);
+    }
+
+    private void startMoveTo(BotEntry entry, Point dest, boolean precise) {
+        clearMode(entry);
+        entry.moveTarget = new Point(dest);
+        entry.moveTargetPrecise = precise;
+        entry.moveTargetSource = "cmd-moveto";
+    }
+
+    public void issueFarmHere(BotEntry entry, Point dest) {
+        if (entry == null || dest == null || entry.bot == null) {
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startFarmHere(entry, dest);
+    }
+
+    private void startFarmHere(BotEntry entry, Point dest) {
+        // Sentry/farm-here is an active combat mode that just anchors to a fixed spot.
+        // Route through the shared active-mode reset so it stays in lock-step with
+        // grind/patrol (self-buff, pot-share, ammo-low, "low on pots" fallback all
+        // gate on entry.grinding).
+        enterActiveMode(entry);
+        entry.farmAnchor = new Point(dest);
+        entry.farmAnchorMapId = entry.bot.getMapId();
+        entry.moveTarget = new Point(dest);
+        entry.moveTargetPrecise = true;
+        entry.moveTargetSource = "farm-here";
+    }
+
+    public void issuePatrol(BotEntry entry, Point ownerPos) {
+        if (entry == null || ownerPos == null || entry.bot == null) {
+            return;
+        }
+        MapleMap map = entry.bot.getMap();
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile);
+        int regionId = graph != null ? graph.findRegionId(map, ownerPos) : -1;
+        if (regionId < 0) {
+            botReply(entry, "can't find a patrol region here");
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startPatrol(entry, regionId);
+    }
+
+    private void startPatrol(BotEntry entry, int regionId) {
+        enterActiveMode(entry);
+        entry.patrolRegionId = regionId;
+        entry.patrolMapId = entry.bot.getMapId();
+        entry.patrolWanderTarget = null;
+    }
+
+    /**
+     * Public hook: return the bot to ordinary owner-follow mode. Scripted map
+     * automation and chat commands should use this instead of writing mode
+     * fields directly.
+     */
+    public void issueFollowOwner(BotEntry entry) {
+        issueFollow(entry, entry != null ? entry.owner : null);
+    }
+
+    /**
+     * Public hook: follow a concrete party/member/bot target. Passing the owner
+     * (or null) means regular owner-follow.
+     */
+    public void issueFollow(BotEntry entry, Character target) {
+        if (entry == null) {
+            return;
+        }
+        Character owner = entry.owner;
+        int desiredTargetId = owner != null && target != null && owner.getId() != target.getId()
+                ? target.getId() : 0;
+        // Idempotent re-assert: already cleanly following this exact target -> no-op. The combat/pot
+        // "resume follow" hooks call this every time they hand control back; re-running clearScriptTasks
+        // (which bumps activityEpoch) on each of those would spuriously read as a NEW directive and drop
+        // an in-flight party-autopilot decide (the "epoch changed mid-decide" silent failure) or
+        // self-interrupt a Maker batch. Only actually re-enter follow when some state needs resetting.
+        if (entry.following && entry.followTargetId == desiredTargetId && !entry.grinding
+                && entry.moveTarget == null && entry.farmAnchor == null && !entry.shopVisitPending) {
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startFollow(entry, target);
+    }
+
+    private void startFollow(BotEntry entry, Character target) {
+        BotAutopilotManager.clear(entry);
+        Character owner = entry.owner;
+        entry.followTargetId = owner != null && target != null && owner.getId() != target.getId()
+                ? target.getId()
+                : 0;
+        entry.grinding = false;
+        entry.moveTarget = null;
+        entry.moveTargetPrecise = false;
+        entry.farmAnchor = null;
+        entry.farmAnchorMapId = -1;
+        entry.following = true;
+    }
+
+    /**
+     * Public hook: enter autonomous grind/combat mode using the same setup as
+     * player chat commands. This deliberately clears fixed movement and follow
+     * targets so scripted "grind" steps do not run in parallel with a stale
+     * navigation command.
+     */
+    public void issueGrind(BotEntry entry) {
+        if (entry == null) {
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startGrind(entry);
+    }
+
+    private void startGrind(BotEntry entry) {
+        enterActiveMode(entry);
+    }
+
+    /**
+     * Shared baseline for all active combat modes (grind / sentry / patrol). Sets
+     * {@code grinding = true} and zeros out follow, move, and sub-mode state so
+     * each mode starts from the same baseline. Mode-specific fields (anchor /
+     * patrol region) are set by the caller after this returns.
+     *
+     * When adding a new active mode, route it through this helper to avoid the
+     * sentry-mode regression where {@code grinding=false} silently disabled the
+     * pot-share, self-buff, and ammo-low fallback paths.
+     */
+    private void enterActiveMode(BotEntry entry) {
+        // Owner-issued grind/sentry/patrol replaces autopilot. BotAutopilotManager.start
+        // relies on this ordering: it calls issueGrind first, then sets its destination.
+        BotAutopilotManager.clear(entry);
+        enterActiveModeCore(entry);
+    }
+
+    /**
+     * Re-enter grind combat WITHOUT clearing autopilot state: used when a party-autopilot
+     * follower arrives at the group destination and swaps from transit-follow back to grind.
+     */
+    void resumeAutopilotGrind(BotEntry entry) {
+        enterActiveModeCore(entry);
+    }
+
+    private void enterActiveModeCore(BotEntry entry) {
+        entry.followTargetId = 0;
+        entry.following = false;
+        entry.moveTarget = null;
+        entry.moveTargetPrecise = false;
+        entry.farmAnchor = null;
+        entry.farmAnchorMapId = -1;
+        entry.patrolRegionId = -1;
+        entry.patrolMapId = -1;
+        entry.patrolWanderTarget = null;
+        entry.grindTarget = null;
+        entry.grindLootTarget = null;
+        entry.nextGrindTargetSearchAtMs = 0L;
+        entry.moveWindowMs = 0;
+        entry.degenAttackDone = false;
+        entry.retreatHoldUntilMs = 0L;
+        entry.retreatHoldPos = null;
+        entry.wanderDirection = 0;
+        BotMovementManager.clearNavigationState(entry);
+        entry.grinding = true;
+    }
+
+    /** Public hook: stop all scripted movement/combat mode and idle in place. */
+    public void issueStop(BotEntry entry) {
+        if (entry == null) {
+            return;
+        }
+        clearScriptTasks(entry);
+        BotShopManager.cancelShopVisit(entry);
+        startStop(entry);
+    }
+
+    private void startStop(BotEntry entry) {
+        clearMode(entry);
+        entry.moveTarget = null;
+        entry.moveTargetPrecise = false;
+    }
+
+    // ---- Operator RTS commands (BotWorldGraphWebServer console) ----------------------------------
+    private static final long OPERATOR_MOVE_STALL_MS = 270_000L; // no-progress (ferry-wait-safe) -> stuck; generous so genuinely huge maps / long walks aren't cut short
+    static final long OPERATOR_CMD_WINDOW_MS = 30 * 60_000L;    // command persists 30 min, then autopilot
+    private static final List<String> CHEER_LINES = List.of(
+            "woohoo!", "let's go!", "yeah!", "gg", "nice!", "wheee");
+
+    /** Apply an operator command (HTTP thread): set the simple field cluster and publish operatorCmd
+     *  LAST. Heavy combat-state init is deferred to the bot tick (initOperatorCommand) so multi-field
+     *  state is never mutated cross-thread. {@code moveMapId} is the already-resolved MOVE destination. */
+    public void applyOperatorCommand(BotEntry entry, BotEntry.OperatorCmd cmd, int moveMapId, int followTargetId) {
+        if (entry == null || cmd == null) {
+            return;
+        }
+        cancelScheduledLogout(entry);
+        entry.operatorMoveMapId = moveMapId;
+        entry.operatorFollowTargetId = followTargetId;
+        entry.operatorCmdUntilMs = System.currentTimeMillis() + OPERATOR_CMD_WINDOW_MS;
+        entry.operatorStuck = false;
+        entry.operatorCmdPending = true;
+        entry.operatorCmd = cmd; // volatile, published last (safe publication of the fields above)
+    }
+
+    /** "goto &lt;map&gt;" (chat command): reuse the operator MOVE travel + arrival behavior (idle at a
+     *  safe spot if the map is mobless, grind if it has mobs) but pin it so it NEVER expires back into
+     *  autopilot — the bot goes there and stays put. SSOT with the RTS move; only the
+     *  {@link #OPERATOR_CMD_WINDOW_MS} expiry is dropped (window = forever). */
+    public void applyGotoCommand(BotEntry entry, int mapId) {
+        if (entry == null || mapId <= 0) {
+            return;
+        }
+        cancelScheduledLogout(entry);
+        entry.operatorMovePos = null;                  // go-to-map, not go-to-(x,y): arrival uses idle-at-spot
+        entry.operatorMoveMapId = mapId;
+        entry.operatorFollowTargetId = 0;
+        entry.operatorCmdUntilMs = Long.MAX_VALUE;     // no expire-into-autopilot: stay until a new command
+        entry.operatorStuck = false;
+        entry.operatorCmdPending = true;
+        entry.operatorCmd = BotEntry.OperatorCmd.MOVE; // volatile, published last (safe publication)
+    }
+
+    /** Operator "moveto" (HTTP/RTS): walk the bot to a precise (x,y) on its CURRENT map and hold there.
+     *  Rides the MOVE command's autopilot-suppression window; the tick honors {@link BotEntry#operatorMovePos}.
+     *  This is the live physics-debug + RTS "go exactly here" primitive (SSOT with the player "here" path). */
+    public void applyOperatorMoveTo(BotEntry entry, Point pos) {
+        if (entry == null || pos == null || entry.bot == null) {
+            return;
+        }
+        cancelScheduledLogout(entry);
+        entry.operatorMovePos = new Point(pos);
+        entry.operatorMoveMapId = entry.bot.getMapId(); // current map => "already arrived" => position-drive branch
+        entry.operatorFollowTargetId = 0;
+        entry.operatorCmdUntilMs = System.currentTimeMillis() + OPERATOR_CMD_WINDOW_MS;
+        entry.operatorStuck = false;
+        entry.operatorCmdPending = true;
+        entry.operatorCmd = BotEntry.OperatorCmd.MOVE; // volatile, published last
+    }
+
+    private static void cancelScheduledLogout(BotEntry entry) {
+        entry.loggingOut = false;
+        entry.logoutLingerUntilMs = 0L;
+        entry.logoutAnchor = null;
+        entry.logoutDisconnecting = false;
+    }
+
+    /** Operator "resume autopilot": end any command now and let autopilot re-decide. */
+    public void resumeFromOperatorCommand(BotEntry entry) {
+        if (entry != null) {
+            clearOperatorCmd(entry);
+        }
+    }
+
+    private void clearOperatorCmd(BotEntry entry) {
+        entry.operatorCmd = null;
+        entry.operatorCmdPending = false;
+        entry.operatorMoveMapId = -1;
+        entry.operatorFollowTargetId = 0;
+        entry.operatorMovePos = null;
+        entry.operatorStuck = false;
+        entry.operatorSpot = null;
+        entry.operatorSpotMapId = -1;
+        entry.operatorMoveProgress.clear();
+        entry.following = false;               // a follow command ends here; don't keep trailing a target
+        entry.followOffsetX = 0;               // clear the operator-follow formation slot
+        BotFidgetManager.clear(entry);
+        entry.autopilotNextDecisionAtMs = 0L; // let autopilot re-decide and take back over immediately
+    }
+
+    /** Heavy init for a freshly-issued command, run on the bot tick thread. */
+    private void initOperatorCommand(BotEntry entry, Character bot, long now) {
+        entry.operatorStuck = false;
+        entry.operatorSpot = null;
+        entry.operatorSpotMapId = -1;
+        BotFidgetManager.clear(entry);
+        switch (entry.operatorCmd) {
+            case IDLE, FIDGET, DANCE, JUMP, FOLLOW -> issueStop(entry); // FOLLOW gate re-asserts following each tick
+            case CHEER -> {
+                issueStop(entry);
+                botSay(bot, randomReply(CHEER_LINES));
+                clearOperatorCmd(entry); // one-shot: cheer, then resume autopilot
+            }
+            case MOVE, MOVE_ATTACK -> {                           // quiet vs fight-en-route; same setup
+                issueGrind(entry);                                // combat baseline; clears autopilot
+                entry.autopilotMapId = entry.operatorMoveMapId;   // ...destination AFTER (mirror start())
+                entry.autopilotNextDecisionAtMs = Long.MAX_VALUE; // pin (maybeRedecide also gated on operatorCmd)
+                entry.operatorMoveProgress.begin(now);
+            }
+        }
+    }
+
+    /** One operator-command tick. Returns true when it consumed the tick; false only for MOVE that
+     *  should ride the normal pipeline (traveling, or arrived on a map with mobs to grind). */
+    private boolean tickOperatorCommand(BotEntry entry, Character bot, Point botPos, long now, boolean runAiTick) {
+        // Just changed maps (travel hop / arrival): the operator gate runs BEFORE tickCore's map-change
+        // block, so footholds/ground aren't rebuilt yet. Defer one tick — otherwise movement runs on a
+        // stale foothold index and the bot freezes airborne / walks in place on arrival.
+        if (entry.lastMapId != bot.getMapId()) {
+            return false;
+        }
+        switch (entry.operatorCmd) {
+            case IDLE -> { tickIdleEntry(entry, bot); return true; }
+            case FOLLOW -> { return tickOperatorFollow(entry, bot, botPos, now, runAiTick); }
+            case FIDGET -> { return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, null); }
+            case DANCE -> { return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, BotFidgetMode.SPAM_SIDEWAYS); }
+            case JUMP -> { return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, BotFidgetMode.JUMP); }
+            case MOVE, MOVE_ATTACK -> {
+                if (bot.getMapId() == entry.operatorMoveMapId) {
+                    entry.operatorStuck = false;
+                    if (entry.operatorMovePos != null) {
+                        return tickOperatorMoveToPos(entry, bot, botPos, now, runAiTick); // precise "go exactly here"
+                    }
+                    if (operatorMapHasMobs(entry.operatorMoveMapId)) {
+                        return false; // arrived with mobs: let the normal grind flow run (map pinned)
+                    }
+                    if (entry.grinding) {
+                        issueStop(entry); // mobless map (e.g. a town): drop the grind baseline so it idles, not "grinding at Perion"
+                    }
+                    return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, null); // no mobs -> idle at a random spot
+                }
+                if (entry.operatorStuck || entry.operatorMoveProgress.stalled(now, OPERATOR_MOVE_STALL_MS)) {
+                    if (!entry.operatorStuck) {
+                        entry.operatorStuck = true;
+                        String reason = entry.followTravelGiveUpReason != null
+                                ? entry.followTravelGiveUpReason : "no route / no progress";
+                        log.info("operator-move: bot {} can't reach map {} ({}); idling until the command expires",
+                                bot.getName(), entry.operatorMoveMapId, reason);
+                        issueStop(entry); // drop the wedged travel and stand down
+                    }
+                    return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, null);
+                }
+                return false; // keep traveling via the normal autopilot pipeline
+            }
+            default -> { return false; }
+        }
+    }
+
+    /** Walk to a random reachable spot near a town NPC/character (the AFK/town-idle SSOT,
+     *  {@link #pickTownLoiterAnchor}) and idle/fidget there. Airborne-safe: walks/falls via
+     *  stepMovementCore until grounded near the spot (mirrors {@link #loiterAtAnchor}), then fidgets
+     *  (forced mode for Dance/Jump, else the varied humanlike standing fidget). */
+    private boolean tickOperatorIdleAtSpot(BotEntry entry, Character bot, Point botPos, long now,
+                                           boolean runAiTick, BotFidgetMode forced) {
+        if (entry.operatorSpot == null || entry.operatorSpotMapId != bot.getMapId()) {
+            entry.operatorSpot = resolveIdleSpot(entry, bot, botPos);
+            entry.operatorSpotMapId = bot.getMapId();
+        }
+        Point spot = entry.operatorSpot != null ? entry.operatorSpot : botPos;
+        if (isNear(botPos, spot, 8) && !entry.inAir && !entry.climbing) {   // arrived & grounded -> fidget in place
+            if (forced != null && entry.fidgetMode == BotFidgetMode.NONE) {
+                BotFidgetManager.startFidget(entry, forced, now, (int) randMs(3000, 6000));
+            }
+            BotFidgetManager.tickStandingFidget(entry, spot, now, runAiTick);
+            return true;
+        }
+        entry.moveTarget = spot;                                            // not there yet (or airborne) -> walk/fall
+        entry.moveTargetPrecise = true;
+        entry.moveTargetSource = "operator-idle";
+        stepMovementCore(entry, spot, runAiTick);
+        return true;
+    }
+
+    /** "moveto": drive the bot to a precise (x,y) on its current map via the full nav pipeline (same
+     *  movement core as the player "here" command), then stand once arrived. The point goes through the
+     *  normal {@code moveTarget} -> nav (A* edges, jumps, climbs) path, so this faithfully reproduces
+     *  whatever the autopilot would do to reach that spot — the live physics-debug surface. */
+    private boolean tickOperatorMoveToPos(BotEntry entry, Character bot, Point botPos, long now, boolean runAiTick) {
+        Point dest = entry.operatorMovePos;
+        if (dest == null) {
+            return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, null);
+        }
+        if (isNear(botPos, dest, 8) && !entry.inAir && !entry.climbing) {   // arrived & grounded -> stand
+            if (entry.grinding) {
+                issueStop(entry); // drop the combat baseline so it just stands at the spot
+            }
+            BotFidgetManager.tickStandingFidget(entry, dest, now, runAiTick);
+            return true;
+        }
+        entry.moveTarget = dest;                                            // not there yet -> walk/fall/climb via nav
+        entry.moveTargetPrecise = true;
+        entry.moveTargetSource = "cmd-moveto";
+        stepMovementCore(entry, dest, runAiTick);
+        return true;
+    }
+
+    private static boolean operatorMapHasMobs(int mapId) {
+        BotSpawnIndex.MapSpawns sp = BotSpawnIndex.get().byMap().get(mapId);
+        return sp != null && !sp.mobCounts().isEmpty();
+    }
+
+    /** Per-bot horizontal spread slot for operator-follow, reusing the owner-follow STAGGER formation
+     *  so a group ordered to follow fans out around the target (idx 0->+px, 1->-px, 2->+2px ...) instead
+     *  of stacking on it. Assigned once at command-issue time (the selection index). */
+    public static int followSlotOffset(int idx, int total) {
+        return FormationState.defaultStagger().offsetFor(idx, total);
+    }
+
+    /** Follow a chosen online character (any player/bot, resolved per tick): cross-map via the shared
+     *  follow-travel ({@link #syncFollowMap}), same-map by standing at the follow-mode formation slot
+     *  (formation offset + foothold/snap resolution, identical to owner/chat follow), with the shared
+     *  loiter locomotion (walk-near + opportunity-attack + settle). Target gone/offline -> stand down at
+     *  a spot. */
+    private boolean tickOperatorFollow(BotEntry entry, Character bot, Point botPos, long now, boolean runAiTick) {
+        Character target = bot.getWorldServer() != null
+                ? bot.getWorldServer().getPlayerStorage().getCharacterById(entry.operatorFollowTargetId) : null;
+        if (target == null || target == bot || !target.isLoggedinWorld() || target.getPosition() == null) {
+            return tickOperatorIdleAtSpot(entry, bot, botPos, now, runAiTick, null); // target gone -> idle (window still expires)
+        }
+        entry.following = true; // enable the cross-map follow-travel gate in syncFollowMap
+        if (bot.getMapId() != target.getMapId()) {
+            if (!syncFollowMap(entry, bot, target, runAiTick)) {
+                tickIdleEntry(entry, bot); // no route this tick (give-up window) -> settle, retry next tick
+            }
+            return true;
+        }
+        // Same-map placement = the follow-mode SSOT: formation offset (followOffsetX) + foothold/snap
+        // resolution via resolveFollowTargetPos, exactly as captureTargetSnapshot builds it for owner/chat
+        // follow. loiterAtAnchor then drives the shared walk-near + opportunity-attack + settle locomotion.
+        Point rawTargetPos = target.getPosition();
+        FormationState formation = formationStateFor(entry);
+        Point followBasePos = new Point(rawTargetPos.x + entry.followOffsetX, rawTargetPos.y);
+        Point followTargetPos = resolveFollowTargetPos(
+                followBasePos, target, rawTargetPos, formation.snapRange(), bot.getMap());
+        loiterAtAnchor(entry, bot, botPos, followTargetPos, runAiTick);
+        return true;
+    }
+
+    /**
+     * Public hook for map scripts: drop up to {@code quantity} from the first
+     * stack of {@code itemId}. Use {@code quantity <= 0} to drop the whole stack.
+     */
+    public boolean issueDropItem(BotEntry entry, InventoryType type, int itemId, short quantity) {
+        if (entry == null || entry.bot == null || type == null) {
+            return false;
+        }
+        var inventory = entry.bot.getInventory(type);
+        if (inventory == null) {
+            return false;
+        }
+        Item item = inventory.findById(itemId);
+        if (item == null || item.getQuantity() <= 0) {
+            return false;
+        }
+        short dropQuantity = quantity <= 0 ? item.getQuantity() : (short) Math.min(quantity, item.getQuantity());
+        InventoryManipulator.drop(entry.bot.getClient(), type, item.getPosition(), dropQuantity);
+        return true;
+    }
+
+    public void clearScriptTasks(BotEntry entry) {
+        if (entry == null) {
+            return;
+        }
+        entry.activityEpoch++;   // signal background batches (Maker craft/disassembly) to self-interrupt
+        entry.scriptTasks.clear();
+        entry.activeScriptTask = null;
+    }
+
+    public void queueTask(BotEntry entry, BotTask task) {
+        if (entry == null || task == null) {
+            return;
+        }
+        entry.scriptTasks.add(task);
+    }
+
+    public void queueMoveTo(BotEntry entry, Point point, boolean precise) {
+        queueTask(entry, BotTask.moveTo(point, precise));
+    }
+
+    public void queueMoveTo(BotEntry entry, Point point, boolean precise, BotTask.MoveCombatMode moveCombatMode) {
+        queueTask(entry, BotTask.moveTo(point, precise, moveCombatMode));
+    }
+
+    public void queueMoveThenDropItem(BotEntry entry, Point point, boolean precise, InventoryType type, int itemId, short quantity) {
+        queueTask(entry, BotTask.moveTo(point, precise));
+        queueTask(entry, BotTask.dropItem(type, itemId, quantity));
+    }
+
+    public void queueFollowThenDropItem(BotEntry entry, Character target, int nearPx, InventoryType type, int itemId, short quantity) {
+        queueTask(entry, BotTask.followUntilNear(target, nearPx));
+        queueTask(entry, BotTask.dropItem(type, itemId, quantity));
+    }
+
+    public boolean hasQueuedTasks(BotEntry entry) {
+        return entry != null && (entry.activeScriptTask != null || !entry.scriptTasks.isEmpty());
+    }
+
+    public boolean isCheapScriptMoveTarget(BotEntry entry,
+                                           Point targetPos,
+                                           int maxPathCost,
+                                           int fallbackRangeX,
+                                           int fallbackRangeY) {
+        if (entry == null || entry.bot == null || targetPos == null) {
+            return false;
+        }
+
+        Character bot = entry.bot;
+        Point botPos = bot.getPosition();
+        if (botPos == null) {
+            return false;
+        }
+        if (Math.abs(targetPos.x - botPos.x) <= cfg.LOOT_RADIUS
+                && Math.abs(targetPos.y - botPos.y) <= cfg.LOOT_RADIUS) {
+            return false;
+        }
+
+        MapleMap map = bot.getMap();
+        if (map == null || map.getFootholds() == null) {
+            return false;
+        }
+
+        BotNavigationGraph graph = BotNavigationGraphProvider.peekBestGraph(map, entry.movementProfile);
+        if (graph == null) {
+            return Math.abs(targetPos.x - botPos.x) <= fallbackRangeX
+                    && Math.abs(targetPos.y - botPos.y) <= fallbackRangeY;
+        }
+
+        int startRegionId = BotNavigationManager.resolveCurrentRegionId(graph, entry, map, botPos);
+        int targetRegionId = BotNavigationManager.resolvePointTargetRegionId(graph, map, targetPos);
+        if (startRegionId < 0 || targetRegionId < 0) {
+            return false;
+        }
+        if (startRegionId == targetRegionId) {
+            return true;
+        }
+
+        List<BotNavigationGraph.Edge> path = BotNavigationManager.findPath(graph, bot, startRegionId, targetRegionId, targetPos);
+        if (path.isEmpty()) {
+            return false;
+        }
+
+        int totalCost = 0;
+        for (BotNavigationGraph.Edge edge : path) {
+            totalCost += edge.cost;
+            if (totalCost > maxPathCost) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void clearMode(BotEntry entry) {
+        BotAutopilotManager.clear(entry);
+        entry.followTargetId = 0;
+        entry.following = false;
+        entry.grinding = false;
+        entry.farmAnchor = null;
+        entry.farmAnchorMapId = -1;
+        entry.patrolRegionId = -1;
+        entry.patrolMapId = -1;
+        entry.patrolWanderTarget = null;
+        entry.grindLootTarget = null;
+    }
+
+    private static boolean isNear(Point source, Point target, int dist) {
+        return source != null && target != null
+                && Math.abs(source.x - target.x) <= dist
+                && Math.abs(source.y - target.y) <= dist;
+    }
+
+    private void tickScriptTasks(BotEntry entry) {
+        if (entry == null || entry.bot == null) {
+            return;
+        }
+
+        while (true) {
+            if (entry.activeScriptTask == null) {
+                entry.activeScriptTask = entry.scriptTasks.poll();
+                if (entry.activeScriptTask == null) {
+                    return;
+                }
+                startScriptTask(entry, entry.activeScriptTask);
+            }
+
+            if (!isScriptTaskComplete(entry, entry.activeScriptTask)) {
+                return;
+            }
+            entry.activeScriptTask = null;
+        }
+    }
+
+    private void startScriptTask(BotEntry entry, BotTask task) {
+        switch (task.type) {
+            case MOVE_TO -> startMoveTo(entry, task.point, task.precise);
+            case FOLLOW_OWNER -> startFollow(entry, entry.owner);
+            case FOLLOW_TARGET -> startFollow(entry, resolveFollowCharacterById(entry, task.targetCharacterId));
+            case FOLLOW_UNTIL_NEAR -> startFollow(entry, resolveFollowCharacterById(entry, task.targetCharacterId));
+            case GRIND -> startGrind(entry);
+            case STOP -> startStop(entry);
+            case DROP_ITEM -> issueDropItem(entry, task.inventoryType, task.itemId, task.quantity);
+        }
+    }
+
+    private boolean isScriptTaskComplete(BotEntry entry, BotTask task) {
+        return switch (task.type) {
+            case MOVE_TO -> entry.moveTarget == null || isNear(entry.bot.getPosition(), task.point,
+                    task.precise ? 8 : BotMovementManager.cfg.STOP_DIST);
+            case FOLLOW_UNTIL_NEAR -> {
+                Character target = resolveFollowCharacterById(entry, task.targetCharacterId);
+                yield target != null
+                        && entry.bot.getMapId() == target.getMapId()
+                        && isNear(entry.bot.getPosition(), target.getPosition(), task.nearPx);
+            }
+            case FOLLOW_OWNER, FOLLOW_TARGET, GRIND, STOP, DROP_ITEM -> true;
+        };
+    }
+
+    private Character resolveFollowCharacterById(BotEntry entry, int targetCharacterId) {
+        if (entry == null || targetCharacterId <= 0) {
+            return entry != null ? entry.owner : null;
+        }
+        if (entry.owner != null && entry.owner.getId() == targetCharacterId) {
+            return entry.owner;
+        }
+        if (entry.owner != null && entry.owner.getParty() != null) {
+            for (Character member : entry.owner.getPartyMembersOnline()) {
+                if (member != null && member.getId() == targetCharacterId && member.isLoggedinWorld()) {
+                    return member;
+                }
+            }
+        }
+        if (entry.owner != null) {
+            for (BotEntry sibling : getBotEntries(entry.owner.getId())) {
+                if (sibling.bot != null && sibling.bot.getId() == targetCharacterId && sibling.bot.isLoggedinWorld()) {
+                    return sibling.bot;
+                }
+            }
+        }
+        return entry.owner;
+    }
+
+    /**
+     * Use any town-return scroll the bot carries (2030000 nearest-town .. 2030006 town-specific),
+     * via the same StatEffect.applyTo warp path players use - we only remove the consumable after
+     * (mirrors ScrollHandler). Skips a scroll whose destination is danger-blocked for this bot
+     * (so a "Return to Sleepywood" never re-traps a low bot) or is a no-op (already there). This
+     * is the rescue a passing player enables by donating a scroll into a trapped bot's USE bag.
+     * Returns false when no usable scroll is found or the warp failed.
+     */
+    boolean tryUseReturnScroll(Character bot) {
+        var use = bot.getInventory(InventoryType.USE);
+        if (use == null) {
+            return false;
+        }
+        for (Item item : use.list()) {
+            if (item == null || item.getQuantity() <= 0 || !ItemConstants.isTownScroll(item.getItemId())) {
+                continue;
+            }
+            StatEffect effect;
+            try {
+                effect = ItemInformationProvider.getInstance().getItemEffect(item.getItemId());
+            } catch (Exception e) {
+                continue;
+            }
+            if (effect == null) {
+                continue;
+            }
+            int dest = effect.getMoveTo();
+            if (dest == MapId.NONE) {
+                dest = bot.getMap().getReturnMapId(); // nearest-town scroll resolves to current map's returnMap
+            }
+            if (dest <= 0 || dest == bot.getMapId() || BotAutopilotManager.isDangerRegionBlocked(bot, dest)) {
+                continue; // no-op, unknown target, or would land back in a region this bot can't escape
+            }
+            if (!effect.applyTo(bot)) {
+                continue;
+            }
+            InventoryManipulator.removeFromSlot(bot.getClient(), InventoryType.USE, item.getPosition(), (short) 1, false);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Owner-offline tick path for entry.moveTarget — drives the bot to its
+     * point using the same stepMovementCore as the regular pipeline. The
+     * regular tick handles moveTarget when owner is online; this is the
+     * minimal version for owner-null sessions (currently the offline-town
+     * cluster walk). Arrival is auto-detected by clearReachedMoveTarget
+     * inside stepMovementCore.
+     */
+    private void tickStandaloneMoveTarget(BotEntry entry, Character bot, boolean runAiTick) {
+        // Just warped in (likely via applyTo): rebuild physics state once.
+        if (groundAfterMapChange(entry, bot)) {
+            return;
+        }
+
+        BotMovementManager.refreshMovementProfile(entry);
+        stepMovementCore(entry, entry.moveTarget, runAiTick);
+    }
+
+    private boolean groundAfterMapChange(BotEntry entry, Character bot) {
+        if (entry.lastMapId == bot.getMapId()) {
+            return false;
+        }
+
+        entry.lastMapId = bot.getMapId();
+        Point cur = bot.getPosition();
+        Point ground = BotPhysicsEngine.findGroundPoint(bot.getMap(), new Point(cur.x, cur.y - 1));
+        BotPhysicsEngine.teleportTo(entry, bot, ground != null ? ground : cur);
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        BotNavigationGraphProvider.warmGraphAsync(bot.getMap(), entry.movementProfile);
+        BotMovementManager.broadcastMovement(entry);
+        return true;
+    }
+
+    private boolean handleDeadTick(BotEntry entry, Character bot, Character owner) {
+        // A normal Bishop resurrection can restore HP while the event death wait is armed.
+        // The timer is bot bookkeeping, not a second death state after the player is alive.
+        if (entry.deadUntil != 0 && bot.getHp() > 0) {
+            entry.deadUntil = 0;
+            return false;
+        }
+        if (entry.deadUntil == 0 && bot.getHp() <= 0) {
+            BotCombatManager.enterDeadState(entry, bot, false);
+        }
+        if (entry.deadUntil == 0) {
+            return false;
+        }
+        if (System.currentTimeMillis() >= entry.deadUntil) {
+            // In a standard PQ/event a real player lies at the tomb until they press OK; there is no
+            // legal in-instance revive. While a teammate is still alive in THIS map, keep lying dead
+            // and re-check (don't exit yet) — once none remain here (all dead, or they advanced to
+            // the next stage) respawnBot runs the legal revive-and-exit path.
+            if (hasLiveEventMateInMap(bot)) {
+                entry.deadUntil = System.currentTimeMillis() + DEAD_EVENT_WAIT_MS;
+                return true;
+            }
+            respawnBot(entry, bot, owner);
+        }
+        return true;
+    }
+
+    // Re-check cadence for a bot lying dead in a PQ while teammates still fight in the same map.
+    private static final long DEAD_EVENT_WAIT_MS = 2_000L;
+
+    /** True when the bot is in a standard (non-CPQ) EIM event and another registered member is alive
+     *  in the bot's current map — the cue to stay dead at the tomb rather than exit the run. */
+    private static boolean hasLiveEventMateInMap(Character bot) {
+        var eim = bot.getEventInstance();
+        if (eim == null || (bot.getMap() != null && bot.getMap().isCPQMap())) {
+            return false;
+        }
+        int mapId = bot.getMapId();
+        for (Character p : eim.getPlayers()) {
+            if (p != null && p.getId() != bot.getId() && p.getHp() > 0 && p.getMapId() == mapId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean runCommonTickSystems(BotEntry entry, Character bot, Character owner, boolean runAiTick) {
+        // Single source of truth for the subsystem sequence. Perf instrumentation is gated by
+        // `perf` so the hot (monitor-disabled) path pays only cheap branch checks and never
+        // allocates timing state, while the enabled path keeps every per-subsystem label.
+        boolean perf = BotPerformanceMonitor.enabled();
+        long t = perf ? System.nanoTime() : 0L;
+        // Abstract-grind LOD1 bots (Stage 3) take no real damage and emit calibrated kills instead of
+        // simulating combat, so the whole live-combat slice — contact-damage sweep, skill (re)buffs,
+        // heal, magic-guard, recovery — is wasted work for them. Gate it off: their tickAbstractGrind
+        // charges coarse MP, and slice 2 will model HP/pots honestly via the danger model rather than
+        // a live per-tick sweep. Same SSOT predicate the grind dispatch uses, so a bot that abstract-
+        // grinds this tick never also runs the real combat slice.
+        boolean abstractCombatless = abstractGrindEligible(entry);
+        // ~5Hz gate for latency-insensitive opportunity scans (loot pickup, quest turn-in), staggered
+        // across bots by id so their cost spreads over ticks instead of spiking one. A ground drop or a
+        // quest turn-in tolerates a 200ms cadence; combat/potions/physics stay at the full tick rate.
+        int tickN = entry.commonTickCounter++;
+        boolean runSlowScans = ((tickN & 3) == (bot.getId() & 3));
+        // Contact-damage sweep is the hot per-tick cost (O(monsters) bbox scan). The 1500ms invuln
+        // window after every hit makes it latency-tolerant, so cadence it 1-in-2 (staggered by id so
+        // bots don't all sweep on the same tick). The cooldown tick-down inside tickMobDamage still
+        // runs every call, so the invuln window length is unaffected.
+        // ponytail: 1-in-2 halves the sweep; widen to (& 3) if a later capture shows it still hot.
+        boolean runMobTouchSweep = !abstractCombatless && ((tickN & 1) == (bot.getId() & 1));
+        BotCombatManager.tickMobDamage(entry, bot, runMobTouchSweep);
+        BotMobAttackObserver.tick(entry, bot);
+        if (runAiTick) BotSummonCombat.tick(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-mob-damage", System.nanoTime() - t);
+        if (bot.getHp() <= 0) {
+            if (entry.deadUntil == 0) {
+                BotCombatManager.enterDeadState(entry, bot, false);
+            }
+            return true;
+        }
+        if (perf) t = System.nanoTime();
+        tickReleaseMonsterControl(bot);
+        if (perf) BotPerformanceMonitor.record("common-release-mob", System.nanoTime() - t);
+        // While a trade window is open, suppress passive loot pickup. pickupItem() runs on
+        // this scheduler thread and races Trade.completeTrade()'s addFromDrop on the packet
+        // thread: fitsInInventory() can pass, then this fills the last slot before addFromDrop
+        // runs, and the silently-ignored false return loses the partner's item.
+        // See memory/kb_bot_trade_dupe_loss_audit.md. marketBusy extends the same protection
+        // to non-Trade inventory staging (stall stocking / merchant buys).
+        if (bot.getTrade() == null && !entry.marketBusy && runSlowScans) {
+            if (perf) t = System.nanoTime();
+            BotInventoryManager.tickPassiveLoot(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-passive-loot", System.nanoTime() - t);
+        }
+        if (perf) t = System.nanoTime();
+        long tPotionTrace = BotPerformanceMonitor.startStallPhase();
+        BotPotionManager.tickPotionCheck(entry, bot);
+        BotPerformanceMonitor.recordStallPhase("common-potion-check", tPotionTrace);
+        if (perf) BotPerformanceMonitor.record("common-potion-check", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        BotPotionManager.tickPassiveRecovery(entry, bot);
+        if (bot.hasDisease(client.Disease.STUN)) {
+            tickStunned(entry);
+            return true;
+        }
+        if (perf) BotPerformanceMonitor.record("common-passive-recovery", System.nanoTime() - t);
+        // Living economy: persist this bot's dirty price beliefs every few minutes, on its own
+        // tick thread (books are tick-thread-owned by design).
+        BotMarketBook.maybeFlush(entry, bot);
+        if (!abstractCombatless) {
+            if (perf) t = System.nanoTime();
+            BotCombatManager.tryCastMagicGuard(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-magic-guard", System.nanoTime() - t);
+            if (perf) t = System.nanoTime();
+            // Top-priority pot-saver: a low-HP-pool bot keeps Beginner Recovery up to bleed the HP gap with
+            // spare MP. Runs in the common section (in OR out of combat); self-gates so it never interrupts
+            // an attack and never blocks the autopot from still potting at its threshold.
+            BotCombatManager.tryCastRecovery(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-recovery-skill", System.nanoTime() - t);
+        }
+        if (perf) t = System.nanoTime();
+        BotBuildManager.checkLevelUp(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-build-levelup", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        if (owner != null) { // owner-null tick = autopilot playing while owner is offline
+            BotChatManager.tickAfkCheck(entry, owner);
+        }
+        if (perf) BotPerformanceMonitor.record("common-afk-check", System.nanoTime() - t);
+        // Real-player takeover (@botme/@botparty) grinds all the time: skip the recreational / economy
+        // detours (gachapon, free-market, shout trades). Questing IS allowed (it's progression, and the
+        // reward pick is asset-safe). Grind-essential logistics (resupply/sell, level-up, deaths, follow,
+        // job advance) still run. Population bots do it all.
+        boolean realTakeover = isRealPlayerTakeover(entry);
+        if (runSlowScans) {
+            if (perf) t = System.nanoTime();
+            BotQuestManager.tickScan(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-quest-scan", System.nanoTime() - t);
+        }
+        if (perf) t = System.nanoTime();
+        // Collision/pit portals (WZ pt=3, scripted pt=9) the client would auto-fire: warp if the bot is
+        // sitting on one (climbed/walked onto it, or got knocked into a pit) - runs in every mode,
+        // intent-independent.
+        BotTravelManager.tickCollisionPortal(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-collision-portal", System.nanoTime() - t);
+        // On a Leafre<->Temple flight map: stay a dragon and (when following/stray) fly the corridor.
+        // Owns the tick so the normal follow/grind/idle dispatch is skipped while airborne. Runs after
+        // the collision-portal hop so a bot that just crossed to the next flight map steers from there.
+        if (BotDragonFlightManager.tickFlyMap(entry, bot, owner, runAiTick)) {
+            return true;
+        }
+        if (perf) t = System.nanoTime();
+        // Ad-hoc party-up: a solo autopilot bot may offer to party a co-located solo bot (self-gated cooldown).
+        BotSocialManager.tick(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-social", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        if (!realTakeover) BotGachaponManager.tickScan(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-gacha-scan", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        if (!realTakeover) BotFreeMarketManager.tickScan(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-fm-scan", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        if (!realTakeover) BotShoutTradeManager.tick(entry, bot, runAiTick);
+        if (perf) BotPerformanceMonitor.record("common-shout-trade", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        BotInventoryManager.tickTrade(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-trade", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        BotInventoryManager.tickManualTrade(entry, bot);
+        if (perf) BotPerformanceMonitor.record("common-manual-trade", System.nanoTime() - t);
+        if (perf) t = System.nanoTime();
+        tickScriptTasks(entry);
+        if (perf) BotPerformanceMonitor.record("common-script-tasks", System.nanoTime() - t);
+        if (BotPqHooks.isNpcLocked(entry)) {
+            return true;
+        }
+        if (perf) t = System.nanoTime();
+        BotCombatManager.tickActionLock(entry);
+        if (perf) BotPerformanceMonitor.record("common-action-lock", System.nanoTime() - t);
+        // Combat can start another attack on every simulation tick. A dedicated boss
+        // crew must check due support actions at that same boundary, otherwise long
+        // spells can repeatedly consume the ready tick between slower AI scans.
+        if (!runAiTick && (BotZakumBattle.inInstance(bot) || BotCarnivalRun.inInstance(bot)
+                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot)) && entry.attackCooldownMs <= 0) {
+            BotCombatManager.tickSupportHealing(entry, bot);
+            BotCombatManager.tickBuffs(entry, bot);
+        }
+        if (runAiTick) {
+            if (perf) t = System.nanoTime();
+            BotCombatManager.rebuildSkillCacheIfNeeded(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-skill-cache", System.nanoTime() - t);
+            // Support healing is top priority — runs before buffs so that a bot below the heal
+            // threshold casts Heal before a rebuff uses up this tick's action window. If it fires,
+            // entry.attackCooldownMs is set to the heal animation lock and tickActionLocked() will
+            // return true, causing the caller to skip attack logic this tick. Skipped for abstract-
+            // grind bots (no real HP loss to heal, no live combat to buff — see abstractCombatless).
+            if (!abstractCombatless) {
+                if (perf) t = System.nanoTime();
+                BotCombatManager.tickSupportHealing(entry, bot);
+                if (perf) BotPerformanceMonitor.record("common-support-heal", System.nanoTime() - t);
+                if (perf) t = System.nanoTime();
+                BotCombatManager.tickBuffs(entry, bot);
+                if (perf) BotPerformanceMonitor.record("common-combat-buffs", System.nanoTime() - t);
+            }
+            if (perf) t = System.nanoTime();
+            BotBuffManager.tick(entry, bot);
+            if (perf) BotPerformanceMonitor.record("common-buff-pots", System.nanoTime() - t);
+        }
+        if (tickActionLocked(entry)) return true;
+        // Consuming PQ controllers need the same skill cache, buffs and action-clock updates as combat.
+        if (perf) t = System.nanoTime();
+        boolean pqConsumed = owner != null && BotPqHooks.tick(entry, bot, owner, runAiTick);
+        if (perf) BotPerformanceMonitor.record("common-pq-hooks", System.nanoTime() - t);
+        return pqConsumed;
+    }
+
+    /**
+     * Physics-only tick used while a trade window is open. Mirrors {@link #tickIdleEntry}'s
+     * physics body but skips the active-mode early-return so gravity / swim / stance stay
+     * consistent even if the bot was following or grinding when the trade started. Issues
+     * no movement input (no follow, grind, teleport, shop visit, or attack).
+     */
+    private void tickTradePhysicsOnly(BotEntry entry, Character bot) {
+        if (bot.getChair() >= 0) {
+            return; // trading from a chair: hold the sit pose, don't broadcast an idle-move over it
+        }
+        if (isSwimMap(entry) && entry.inAir && !entry.climbing) {
+            BotMovementManager.tickSwimming(entry, null);
+        } else if (entry.inAir) {
+            BotMovementManager.tickAirborne(entry, null);
+        } else if (!entry.climbing) {
+            int expectedIdleStance = BotPhysicsEngine.resolveIdleGroundStance(entry);
+            if (BotPhysicsEngine.resolveStance(entry) != expectedIdleStance
+                    || bot.getStance() != expectedIdleStance) {
+                BotPhysicsEngine.idleOnGround(entry, bot);
+                BotMovementManager.broadcastMovement(entry);
+            }
+        }
+    }
+
+    /**
+     * A self-owned/managed bot whose autopilot has gone inert (between decides, or a chill session)
+     * would otherwise stand still via {@link #tickIdleEntry} and pile onto the spawn portal with every
+     * other idle bot. Instead park it at a spread spot near a town NPC/character - the same AFK/town-
+     * idle destack SSOT the operator "idle" command uses ({@link #pickTownLoiterAnchor}) - so idlers
+     * fan out. Only genuinely-idle bots on a SAFE (mob-free) map; grind maps keep the danger-aware
+     * break-idle, errand/trade/follow bots are left alone, and the autopilot self-heal still runs so
+     * the bot re-decides back into grinding. Returns true when it drove the tick.
+     */
+    private boolean tickTownIdleDestack(BotEntry entry, Character bot, boolean runAiTick) {
+        // Mirror tickIdleEntry's "genuinely idle" guard, plus: no errand in flight, no operator hold.
+        if (entry.following || entry.grinding || entry.farmAnchor != null || entry.shopVisitPending
+                || entry.autopilotWaitAnchor != null || entry.operatorCmd != null
+                || entry.fmErrandMapId != -1 || entry.gachaErrandMapId != -1
+                || entry.questErrandMapId != -1 || entry.jobErrandMapId != -1
+                || entry.autopilotErrandMapId != -1) {
+            return false;
+        }
+        boolean selfOwned = isSelfDrivingBot(entry);
+        if (!selfOwned || entry.inAir || entry.climbing || bot.getMap() == null
+                || operatorMapHasMobs(bot.getMapId())) {
+            return false; // owned companions idle by their owner; grind maps use the danger-aware idle
+        }
+        // Keep the self-heal alive (it lives in tickIdleEntry, which we are about to preempt): a bot
+        // whose autopilot leaked to inert must still re-decide back out to grinding.
+        maybeRecoverInertAutopilot(entry, bot);
+        if (entry.grinding || BotAutopilotManager.isActive(entry)) {
+            return false; // recovery kicked it back out this tick -> don't park
+        }
+        Point botPos = bot.getPosition();
+        if (botPos == null) {
+            return false;
+        }
+        if (entry.idleDestackSpot == null || entry.idleDestackMapId != bot.getMapId()) {
+            entry.idleDestackSpot = resolveIdleSpot(entry, bot, botPos);
+            entry.idleDestackMapId = bot.getMapId();
+        }
+        if (entry.idleDestackSpot == null) {
+            return false;
+        }
+        // Chill / inert town idle: once settled at the spread spot, maybe plop into a chair the bot owns
+        // (the map is already gated safe + self-driving above). Held here so the idle-move broadcast that
+        // fights the sit pose is skipped. stepMovementCore stands it before any later real movement.
+        boolean settled = !entry.inAir && !entry.climbing
+                && isNear(botPos, entry.idleDestackSpot, BotMovementManager.cfg.STOP_DIST);
+        if (settled && BotChairManager.tickIdleSit(entry, bot, System.currentTimeMillis())) {
+            return true;
+        }
+        loiterAtAnchor(entry, bot, botPos, entry.idleDestackSpot, runAiTick); // walk-near + settle SSOT
+        return true;
+    }
+
+    private boolean tickIdleEntry(BotEntry entry, Character bot) {
+        if (entry.following || entry.grinding || entry.moveTarget != null
+                || entry.farmAnchor != null || entry.shopVisitPending
+                || entry.autopilotWaitAnchor != null) {
+            // A party leader holding at a next-hop portal for stragglers runs with grinding=false, so
+            // without this it looks "idle" and this fast-path would consume the tick BEFORE autopilot's
+            // tickPartyCohesion -- freezing the straggler verdict so the hold never re-evaluates or
+            // releases. Yield to autopilot; BotManager's wait-anchor loiter still parks it at the portal.
+            return false;
+        }
+        maybeRecoverInertAutopilot(entry, bot);
+        if (isSwimMap(entry) && entry.inAir && !entry.climbing) {
+            BotMovementManager.tickSwimming(entry, null);
+        } else if (entry.inAir) {
+            BotMovementManager.tickAirborne(entry, null);
+        } else if (!entry.climbing) {
+            int expectedIdleStance = BotPhysicsEngine.resolveIdleGroundStance(entry);
+            if (BotPhysicsEngine.resolveStance(entry) != expectedIdleStance
+                    || bot.getStance() != expectedIdleStance) {
+                BotPhysicsEngine.idleOnGround(entry, bot);
+                BotMovementManager.broadcastMovement(entry);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Self-healing for inert autopilot. A self-owned/managed bot (no human owner to deliberately idle
+     * it) should always be autopiloting while online, but the destination can leak to OFF
+     * ({@code autopilotMapId == -1}) and never recover: a {@code start()} whose decision came back null
+     * (no reachable spot, or a swallowed exception) installs no plan and schedules no retry, and the
+     * {@link BotAutopilotManager#onDeathLoop} escape drops the pick too. Every re-decide path gates on
+     * {@code isActive}, so once off nothing turns it back on — the bot stands idle in town forever. This
+     * throttled retry (only fires for a fully-idle, self-owned, live, non-logging-out bot) re-runs the
+     * decision so it gets back out grinding. Reuses {@code autopilotNextDecisionAtMs} as the backoff
+     * clock — it's only consumed by maybeRedecide while ACTIVE, so it's free here, and {@code start()}
+     * resets it to nextDecisionAt() the moment a plan installs.
+     */
+    private void maybeRecoverInertAutopilot(BotEntry entry, Character bot) {
+        if (entry.operatorCmd != null || isAdminFollowActive(entry)) {
+            return; // an operator command (IDLE/FIDGET) or an admin hijack-follow deliberately holds the bot off autopilot
+        }
+        boolean selfOwned = isSelfDrivingBot(entry);
+        if (!selfOwned || entry.loggingOut || entry.deadUntil != 0
+                || entry.autopilotDecisionInFlight || BotAutopilotManager.isActive(entry)) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now < entry.autopilotNextDecisionAtMs) {
+            return;
+        }
+        entry.autopilotNextDecisionAtMs = now + randMs(30_000, 60_000); // backoff; start() resets on success
+        long t0 = BotPerformanceMonitor.start();
+        // Recover crew members back INTO their party cohort, not as soloists: the solo start() clears
+        // autopilotParty, so a per-bot solo recovery would silently dissolve the crew (each member then
+        // re-decides its own best map and they scatter). Leader-only triggers the group recovery; the
+        // rest wait and get re-engaged by the leader's startParty.
+        List<BotEntry> cohort = partyAutopilotCohort(entry);
+        if (cohort.size() >= 2) {
+            // When the whole crew goes inert together, only the leader fires (non-leaders see an inert
+            // leader and defer to its tick) so decideParty doesn't run N times. But if the leader is
+            // ACTIVE it will never self-recover the group, so an orphaned inert member must trigger it.
+            BotEntry leader = cohort.get(0);
+            if (shouldTriggerCrewRecovery(leader == entry, BotAutopilotManager.isActive(leader))) {
+                BotAutopilotManager.startParty(bot, cohort);
+            }
+        } else {
+            BotAutopilotManager.start(entry, bot); // schedules decide() off-thread; this only times the fire rate
+        }
+        BotPerformanceMonitor.recordSince("autopilot-recover", t0);
+    }
+
+    /**
+     * Which inert crew member fires the group's party recovery. The leader fires; a non-leader fires only
+     * when the leader is ACTIVE (it will never self-recover the group, so an orphaned inert member must),
+     * and otherwise defers so an all-inert crew runs decideParty once (via the leader) instead of N times.
+     */
+    static boolean shouldTriggerCrewRecovery(boolean isLeader, boolean leaderActive) {
+        return isLeader || leaderActive;
+    }
+
+    private boolean syncFollowMap(BotEntry entry, Character bot, Character followAnchor, boolean runAiTick) {
+        if (!entry.following || followAnchor == null || bot.getMapId() == followAnchor.getMapId()) {
+            BotTravelManager.clear(entry);
+            return false;
+        }
+        // The anchor is inside an event instance this bot is NOT registered in (e.g. a PQ that
+        // started without it): a real player could not enter either, and warping in anyway starts a
+        // fight with the instance logic (its map tick bounces the intruder back out, forever). Hold
+        // position outside until the anchor leaves the instance.
+        if (followAnchor.getEventInstance() != null
+                && bot.getEventInstance() != followAnchor.getEventInstance()) {
+            BotTravelManager.clear(entry);
+            return true; // consume the tick standing by — do not walk/warp after the anchor
+        }
+        // Anchor is one portal hop away: walk to that portal and enter it legally like a
+        // trailing player would. Multi-hop / no-portal / failed walks fall through to the warp.
+        if (BotTravelManager.tickFollowTravel(entry, bot, followAnchor, runAiTick)) {
+            return true;
+        }
+        // Ground against the anchor's actual position in their NEW map. The previously-passed
+        // followTargetPos was computed from the bot's OLD map (foothold snaps, formation offsets),
+        // so it could land off-map in the new map and cause far-away/OOB spawns.
+        MapleMap targetMap = followAnchor.getMap();
+        Point anchorPos = followAnchor.getPosition();
+        Point spawn = BotPhysicsEngine.findGroundPoint(targetMap, new Point(anchorPos.x, anchorPos.y - 1));
+        if (spawn == null) {
+            spawn = anchorPos;
+        }
+        BotPhysicsEngine.idleOnGround(entry, bot);
+        bot.changeMap(targetMap, spawn);
+        BotMovementManager.resetEntryState(entry);
+        return true;
+    }
+
+    boolean recoverTeleportDistance(BotEntry entry, Character bot, Point targetPos) {
+        Point botPos = bot.getPosition();
+        int manhattan = Math.abs(botPos.x - targetPos.x) + Math.abs(botPos.y - targetPos.y);
+        if (manhattan > BotMovementManager.cfg.TELEPORT_DIST) {
+            return executeRecoveryTeleport(entry, bot, targetPos);
+        }
+        // Out-of-bounds recovery: airborne physics has no VR-bottom hard stop, so a bot that
+        // slips below the floor (or past the side walls in rare cases) keeps free-falling
+        // indefinitely until the 4000 Manhattan fallback catches it. That can leave the bot
+        // out of the map for several seconds with the owner still on the same screen
+        // (manhattan < 4000). Trigger a tighter teleport once we can prove the bot is
+        // outside the map's VR rectangle.
+        Rectangle area = bot.getMap() == null ? null : bot.getMap().getMapArea();
+        if (area != null && area.width > 0 && area.height > 0
+                && !area.contains(botPos)
+                && manhattan > BotMovementManager.cfg.OOB_TELEPORT_DIST) {
+            return executeRecoveryTeleport(entry, bot, targetPos);
+        }
+        return false;
+    }
+
+    private boolean recoverGrindPartyTeleportDistance(BotEntry entry, Character bot, Character partyAnchor) {
+        if (entry == null || bot == null || partyAnchor == null || !entry.grinding || entry.shopVisitPending) {
+            return false;
+        }
+        if (entry.moveTarget != null || entry.farmAnchor != null) {
+            return false;
+        }
+        if (bot.getMap() == null || partyAnchor.getMap() != bot.getMap()) {
+            return false;
+        }
+
+        Point botPos = bot.getPosition();
+        Point anchorPos = partyAnchor.getPosition();
+        if (botPos == null || anchorPos == null || !isInKnownMapBounds(bot.getMap(), anchorPos)) {
+            return false;
+        }
+
+        int manhattan = Math.abs(botPos.x - anchorPos.x) + Math.abs(botPos.y - anchorPos.y);
+        int multiplier = Math.max(1, cfg.GRIND_PARTY_TELEPORT_DIST_MULTIPLIER);
+        if (manhattan > BotMovementManager.cfg.TELEPORT_DIST * multiplier) {
+            return executeRecoveryTeleport(entry, bot, anchorPos);
+        }
+
+        Rectangle area = bot.getMap().getMapArea();
+        if (hasKnownMapBounds(area)
+                && !area.contains(botPos)
+                && manhattan > BotMovementManager.cfg.OOB_TELEPORT_DIST * multiplier) {
+            return executeRecoveryTeleport(entry, bot, anchorPos);
+        }
+        return false;
+    }
+
+    // ~1.5s of airborne ticks with zero motion before the watchdog teleports the bot out.
+    private static final int AIR_STUCK_RECOVER_TICKS = 30;
+
+    /**
+     * Frozen-air watchdog: a falling/jumping bot's position must change every tick. Zero
+     * motion while {@code inAir} means it is wall-pinned at a map edge with no foothold
+     * below (the WALL collision re-pins the same point forever — see
+     * logs/bot-nav/pathlog-Clawer-2026-06-10T094813.txt, stuck 3px under the OOB recovery
+     * threshold). Regular stuck handling skips airborne bots, so catch it here and teleport
+     * to the active goal's ground.
+     */
+    private static void tickFrozenAirborneWatchdog(BotEntry entry) {
+        if (!entry.inAir || entry.climbing) {
+            entry.airStuckTicks = 0;
+            entry.airStuckX = Integer.MIN_VALUE;
+            return;
+        }
+        Point pos = entry.bot.getPosition();
+        if (pos.x != entry.airStuckX || pos.y != entry.airStuckY) {
+            entry.airStuckTicks = 0;
+            entry.airStuckX = pos.x;
+            entry.airStuckY = pos.y;
+            return;
+        }
+        if (++entry.airStuckTicks < AIR_STUCK_RECOVER_TICKS) {
+            return;
+        }
+        entry.airStuckTicks = 0;
+        entry.airStuckX = Integer.MIN_VALUE;
+
+        Point goal = entry.moveTarget != null ? entry.moveTarget : entry.navTargetPos;
+        if (goal == null && entry.bot.getMap() != null) {
+            var portal = entry.bot.getMap().findClosestPortal(pos);
+            goal = portal != null ? portal.getPosition() : null;
+        }
+        getInstance().executeRecoveryTeleport(entry, entry.bot, goal != null ? goal : pos);
+    }
+
+    private static boolean isInKnownMapBounds(MapleMap map, Point point) {
+        Rectangle area = map == null ? null : map.getMapArea();
+        return !hasKnownMapBounds(area) || area.contains(point);
+    }
+
+    private static boolean hasKnownMapBounds(Rectangle area) {
+        return area != null && area.width > 0 && area.height > 0;
+    }
+
+    private boolean executeRecoveryTeleport(BotEntry entry, Character bot, Point targetPos) {
+        // PQ platform work must use real movement, never a recovery position snap.
+        if (BotOpqRun.inInstance(bot) || BotEllinRun.inInstance(bot) || (BotLpqRun.inInstance(bot) && bot.getMapId() >= 922010401 && bot.getMapId() <= 922010405))
+            return false;
+        Point spawn = BotPhysicsEngine.findGroundPoint(bot.getMap(), new Point(targetPos.x, targetPos.y - 1));
+        if (spawn == null) {
+            spawn = targetPos;
+        }
+        BotPhysicsEngine.teleportTo(entry, bot, spawn);
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        BotMovementManager.broadcastMovement(entry);
+        return true;
+    }
+
+    boolean stepMovementOnly(BotEntry entry, long tickAtMs) {
+        if (entry == null || entry.bot == null) {
+            return false;
+        }
+
+        boolean runAiTick = consumeAiTick(entry);
+        entry.lastTickWasAi = runAiTick;
+        entry.lastTickAtMs = tickAtMs;
+
+        TargetSnapshot targetSnapshot = captureTargetSnapshot(entry);
+        Point ownerPos = targetSnapshot.rawOwnerPos();
+        updateObservedOwnerMotion(entry, ownerPos);
+        entry.lastOwnerPos = new Point(ownerPos);
+        stepMovementOnly(entry, targetSnapshot.primaryTargetPos(), ownerPos, runAiTick);
+        return runAiTick;
+    }
+
+    void stepMovementOnly(BotEntry entry,
+                          Point targetPos,
+                          Point ownerPos,
+                          boolean runAiTick) {
+        if (entry == null || entry.bot == null || targetPos == null) {
+            return;
+        }
+
+        Character bot = entry.bot;
+        Character owner = entry.owner;
+
+        if (tickIdleEntry(entry, bot)) {
+            return;
+        }
+
+        // Rebuild physics on map change BEFORE follow/warp/recovery decisions (see tickEntry).
+        if (entry.lastMapId != bot.getMapId()) {
+            entry.lastMapId = bot.getMapId();
+            Point cur = bot.getPosition();
+            Point ground = BotPhysicsEngine.findGroundPoint(bot.getMap(), new Point(cur.x, cur.y - 1));
+            BotPhysicsEngine.teleportTo(entry, bot, ground != null ? ground : cur);
+            BotMovementManager.resetEntryStateAfterTeleport(entry);
+            BotMovementManager.broadcastMovement(entry);
+            BotShopManager.onMapChange(entry, bot);
+            armPostWarpQuiet(entry);
+            BotChatManager.checkBotStatus(entry, bot);
+            return;
+        }
+
+        if (owner != null && !entry.shopVisitPending && syncFollowMap(entry, bot, owner, runAiTick)) {
+            return;
+        }
+        Character followAnchor = resolveFollowAnchor(entry, owner);
+        if (recoverGrindPartyTeleportDistance(entry, bot, followAnchor)) {
+            return;
+        }
+        if (recoverTeleportDistance(entry, bot, targetPos)) {
+            return;
+        }
+
+        // Shop visit: navigate to approach point before resuming normal flow.
+        if (entry.shopVisitPending) {
+            boolean consumed = BotShopManager.tickShopVisit(entry, bot);
+            targetPos = entry.shopTargetPos != null ? entry.shopTargetPos : entry.shopNpcPos;
+            if (!consumed && entry.shopApproachDelayMs > 0) {
+                return;
+            }
+            if (targetPos != null) {
+                stepMovementCore(entry, targetPos, runAiTick);
+            }
+            return;
+        }
+
+        if (tryFollowIdleMovementFastPath(entry, bot, targetPos, entry.lastTickAtMs)) {
+            return;
+        }
+
+        stepMovementCore(entry, targetPos, runAiTick);
+    }
+
+    static boolean tryFollowIdleMovementFastPath(BotEntry entry, Character bot, Point targetPos, long nowMs) {
+        if (!isFollowIdleMovementFastPathEligible(entry, bot, targetPos)) {
+            return false;
+        }
+
+        if (entry.nextFollowIdleMovementCheckAtMs == 0L) {
+            entry.nextFollowIdleMovementCheckAtMs = nowMs + 1000L;
+        } else if (nowMs >= entry.nextFollowIdleMovementCheckAtMs) {
+            entry.nextFollowIdleMovementCheckAtMs = nowMs + 1000L;
+            return false;
+        }
+
+        entry.lastNavDecision = "idle-fast";
+        entry.stuckMs = 0;
+        entry.stuckCheckX = Integer.MIN_VALUE;
+        return true;
+    }
+
+    private static boolean isFollowIdleMovementFastPathEligible(BotEntry entry, Character bot, Point targetPos) {
+        if (entry == null || bot == null || targetPos == null) {
+            return false;
+        }
+        if (!entry.following || entry.grinding || entry.moveTarget != null) {
+            return false;
+        }
+        if (entry.inAir || entry.climbing || entry.downJumpPending || entry.graphWarmupFallback) {
+            return false;
+        }
+        if (entry.navEdge != null || entry.navPreciseTarget || entry.fidgetMode != BotFidgetMode.NONE) {
+            return false;
+        }
+        if (entry.shopVisitPending || entry.shopSequenceActive) {
+            return false;
+        }
+        if (entry.wasMovingX || entry.moveDir != 0 || entry.movementVelX != 0 || entry.movementVelY != 0) {
+            return false;
+        }
+        if (entry.observedOwnerStepX != 0 || entry.observedOwnerStepY != 0) {
+            return false;
+        }
+
+        Point botPos = bot.getPosition();
+        return Math.abs(targetPos.x - botPos.x) <= BotMovementManager.cfg.FOLLOW_DIST
+                && Math.abs(targetPos.y - botPos.y) <= BotMovementManager.cfg.STOP_DIST;
+    }
+
+    // LOD1 motion-plan tuning: re-plan when the goal shifts more than this, and reuse a committed
+    // route's baked length only when its target ~= the current goal (else straight-line).
+    private static final int MOTION_REPLAN_DIST = 40;
+    private static final int MOTION_ROUTE_MATCH_DIST = 60;
+
+    /**
+     * True when an unobserved (LOD1) bot's in-map movement can be abstracted to a motion plan this
+     * tick: it is grounded and in no state that runs a raw physics integrator (air/climb/swim/fidget)
+     * or a separate movement path (trade/market/ferry/FM/gacha errand, operator command). Those stay
+     * on real physics so the lerp never corrupts them — and, in Stage 2's cadence gate, keep the bot at
+     * 50ms. (docs/bot/living-server-design.md.)
+     */
+    private boolean lod1MotionPlanCovered(BotEntry entry) {
+        if (entry == null || entry.lod != BotEntry.Lod.LOD1) {
+            return false;
+        }
+        Character bot = entry.bot;
+        if (bot == null || bot.getMap() == null) {
+            return false;
+        }
+        return !entry.inAir && !entry.climbing && !entry.swimming
+                && entry.fidgetMode == BotFidgetMode.NONE
+                && bot.getTrade() == null && !entry.marketBusy
+                && entry.fmErrandMapId == -1 && entry.gachaErrandMapId == -1
+                && entry.operatorCmd == null
+                // Zakum PQ instance / lava course: instance-blind timed-warp travel and motion-plan
+                // lerps must never fire there (the errand needs real portals/physics). The tooth
+                // grind phase stays LOD-eligible like any other grind.
+                && !BotZakumPrequestManager.inLiveMaps(bot)
+                && !BotKpqRun.inInstance(bot) && !BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot)
+                && !BotZakumBattle.belongsTo(bot, entry.ownerCharId);
+    }
+
+    /**
+     * LOD1 in-map movement (design §2.1): no physics/nav/collision. The bot lerps along a motion plan
+     * (from,to,depart,arrive) toward {@code targetPos} at its real ground speed. Distance comes from the
+     * committed-route edge chain when one matches the goal (no live A*), else straight-line ×1.3. Y is
+     * held at the frozen foothold Y until arrival; the exact Y is reconciled only at the LOD0 snap (§4).
+     */
+    private void tickMotionPlan(BotEntry entry, Point targetPos) {
+        Character bot = entry.bot;
+        long now = System.currentTimeMillis();
+        Point botPos = bot.getPosition();
+        if (targetPos == null) {
+            entry.motionTo = null; // no goal — idle in place, stay grounded/synced
+            BotPhysicsEngine.teleportTo(entry, bot, botPos);
+            entry.lastNavDecision = "lod1-idle";
+            return;
+        }
+        Point dest = new Point(targetPos.x, targetPos.y);
+        if (entry.motionTo == null || entry.motionTo.distance(dest) > MOTION_REPLAN_DIST) {
+            double dist;
+            if (entry.committedRoute != null && !entry.committedRoute.isEmpty()
+                    && entry.committedRouteTargetPos != null
+                    && entry.committedRouteTargetPos.distance(dest) <= MOTION_ROUTE_MATCH_DIST) {
+                dist = BotPhysicsEngine.routePixelLength(entry.committedRoute);
+            } else {
+                dist = BotPhysicsEngine.straightLinePixelLength(botPos, dest);
+            }
+            entry.motionFrom = new Point(botPos.x, botPos.y);
+            entry.motionTo = dest;
+            entry.motionHoldY = botPos.y;
+            entry.motionDepartMs = now;
+            long dur = BotPhysicsEngine.motionDurationMs(dist,
+                    entry.movementProfile.walkVelocityPxs(), ThreadLocalRandom.current());
+            entry.motionArriveMs = now + dur;
+        }
+        Point pos = BotPhysicsEngine.motionLerp(entry.motionFrom, entry.motionTo,
+                entry.motionDepartMs, entry.motionArriveMs, entry.motionHoldY, now);
+        if (pos != null) {
+            BotPhysicsEngine.teleportTo(entry, bot, pos);
+        }
+        entry.lastNavDecision = "lod1-motion";
+    }
+
+    // ===== Stage 3: abstract grind for covered, unobserved (LOD1) bots (design §2.3) =====
+    // A bot's own fresh measured rate stays authoritative for this long after its last kill; after
+    // that the rate is the advisor's on-demand map model × the (job, level-band) correction bucket
+    // (BotGrindAdvisor.modeledKillsPerHourCached, learned against the same model in BotKillCalibration).
+    private static final long ABSTRACT_FRESH_RATE_MS = 10 * 60_000L;
+    /** How long a rate-less bot waits before re-asking the model (caches still cold, or a map with
+     *  nothing grindable on it). It kills nothing meanwhile. */
+    private static final long UNCALIBRATED_RECHECK_MS = 5_000L;
+
+    /**
+     * One coarse tick of abstract grind: the bot holds its ground (no target search / attack planning /
+     * physics) and emits calibrated kill events against live spawned mobs through the real death path
+     * ({@link MapleMap#damageMonster} → exp/drops/quests/spawn bookkeeping all full-fidelity). Buffs,
+     * potions, passive loot and passive recovery already ran in runCommonTickSystems this tick, so this
+     * method only owns the kill generator and its honest MP charge. Always consumes the tick.
+     */
+    private void tickAbstractGrind(BotEntry entry, Character bot, Point botPos, boolean runAiTick) {
+        entry.grindTarget = null;                  // abstract grind holds no live combat target
+        BotPhysicsEngine.idleOnGround(entry, bot); // stay grounded/synced in place (unobserved: no broadcast)
+        if (!runAiTick) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        // The same personality/group break rolls the real grind path makes, so an unobserved bot keeps
+        // its farm/idle ratio instead of farming 24/7. On a break — or while a party level-gap
+        // idle-leech suppresses all damage — a real bot kills nothing, so the abstract grind must grant
+        // nothing either. (Measured live: an idle-leech bot at 0 real kills/hr was being granted the
+        // full modeled rate while unobserved.) A rest break that wants a town trip sets restErrand,
+        // which drops the bot out of abstract eligibility into the real errand path on its own.
+        if (!isRealPlayerTakeover(entry) && !BotAutopilotManager.maybeStartGroupBreak(entry, bot)) {
+            BotBreakManager.maybeStartBreak(entry, bot, now);
+        }
+        if (BotBreakManager.onBreak(entry, now) || entry.idleLeech) {
+            entry.nextAbstractKillAtMs = 0L; // re-arm fresh on resume; no kill accrues across the pause
+            return;
+        }
+        if (entry.breakUntilMs != 0L) {
+            BotBreakManager.endBreak(entry, bot); // break just elapsed -> clear + resume
+        }
+        // A caster that cannot pay its attack skill's MP cost stops earning: a real out-of-MP mage is
+        // reduced to a staff poke worth ~nothing (measured live: 12 real kills/hr vs 1896 granted).
+        // Non-casters keep killing — their plain weapon swing is close to their skill damage. MP
+        // recovers through the potion/regen systems that already run each coarse tick, so kills resume
+        // exactly when a real bot's casting would — i.e. the rate becomes MP-throughput-limited, which
+        // is the real dynamic for a bot too broke to buy MP pots.
+        if (bot.getJobStyle() == client.Job.MAGICIAN
+                && bot.getMp() < primaryAttackMpCon(entry, bot)) {
+            entry.nextAbstractKillAtMs = 0L;
+            return;
+        }
+        double kph = calibratedKillsPerHour(entry, bot);
+        if (kph <= 0) {
+            // Neither measured nor modelable for this spot (caches cold, or nothing grindable here):
+            // we do not know how fast this bot grinds, so grant nothing and look again shortly.
+            // Emitting a kill anyway would apply a flat 3600/5 = 720 kills/hr floor regardless of
+            // job, level, or map — the exact defect the sustained-rate rework removed.
+            entry.nextAbstractKillAtMs = now + UNCALIBRATED_RECHECK_MS;
+            return;
+        }
+        if (entry.nextAbstractKillAtMs == 0L) {
+            entry.nextAbstractKillAtMs = now + abstractKillDelayMs(kph);
+            return;
+        }
+        if (now < entry.nextAbstractKillAtMs) {
+            return;
+        }
+        Monster mob = pickAbstractKillTarget(entry, bot, botPos);
+        long delayMs = abstractKillDelayMs(kph);
+        if (mob != null) {
+            // Step to the kill the way a real grinder would have walked there (unobserved: nothing
+            // renders the hop). Without this, kills far across the map shed their drops outside the
+            // bot's passive-loot range and the abstract grind under-earns loot/meso vs real grinding.
+            BotPhysicsEngine.teleportTo(entry, bot, mob.getPosition());
+            bot.getMap().damageMonster(bot, mob, mob.getHp()); // exactly lethal, credited to the bot
+            chargeAbstractGrindMp(entry, bot, delayMs);
+            entry.abstractKillCount++;
+        }
+        // Re-arm regardless. When the map is spawn-limited (mob == null) the bot simply misses this kill,
+        // exactly as a real one loses the race to a rival — contention is enforced by the empty map, not by
+        // the rate. The rate itself is learned from real grinding under whatever crowd was present.
+        entry.nextAbstractKillAtMs = now + delayMs;
+    }
+
+    /** Poisson (exponential) inter-kill delay (ms) around the calibrated mean, so abstract kills don't
+     *  arrive metronomically. Caller must pass a positive rate. */
+    private long abstractKillDelayMs(double kph) {
+        double meanMs = 3_600_000.0 / kph;
+        double u = Math.max(1e-6, ThreadLocalRandom.current().nextDouble());
+        long d = Math.round(-meanMs * Math.log(u));                   // exponential inter-arrival
+        return Math.max(200L, Math.min(d, Math.round(meanMs * 5.0))); // clamp pathological head/tail
+    }
+
+    /** The bot's calibrated kills/hr on its current map: its own fresh measured rate when it has one,
+     *  else the advisor's modeled rate for this map × the (job, level-band) correction bucket. The
+     *  bucket was learned against the same model (BotKillCalibration), so the model's systematic error
+     *  cancels; no committed plan or prediction is required, which keeps directed (!goto), owner-
+     *  commanded, and freshly-restarted bots earning at a modeled rate instead of stalling. */
+    private double calibratedKillsPerHour(BotEntry entry, Character bot) {
+        double fresh = BotKillCalibration.freshBotRate(bot.getId(), bot.getMapId(), ABSTRACT_FRESH_RATE_MS);
+        if (fresh > 0) {
+            return fresh;
+        }
+        int jobId = bot.getJob() != null ? bot.getJob().getId() : 0;
+        return BotGrindAdvisor.modeledKillsPerHourCached(entry, bot)
+                * BotKillCalibration.bucketFactor(jobId, bot.getLevel() / 10);
+    }
+
+    /** Pick a live spawned mob for an abstract kill: nearest to the bot (short hops, so the bot drifts
+     *  across spawn clusters the way a real grinder works a map), preferring active-quest mobs so quests
+     *  still progress. Map-wide, but only runs on a due kill (seconds apart), not per tick. Null when
+     *  the map is spawn-limited. The caller steps the bot to the mob before the kill, which is what
+     *  keeps drops inside passive-loot range. */
+    private Monster pickAbstractKillTarget(BotEntry entry, Character bot, Point botPos) {
+        MapleMap map = bot.getMap();
+        if (map == null || map.getSpawnedMonstersOnMap() == 0) {
+            return null;
+        }
+        java.util.Set<Integer> questMobs = entry.activeQuestMobIds;
+        Monster nearest = null;
+        double nearestSq = Double.MAX_VALUE;
+        Monster nearestQuest = null;
+        double nearestQuestSq = Double.MAX_VALUE;
+        for (server.maps.MapObject o : map.getMonsters()) {
+            Monster m = (Monster) o;
+            if (!m.isAlive()) {
+                continue;
+            }
+            double dsq = m.getPosition().distanceSq(botPos);
+            if (dsq < nearestSq) {
+                nearestSq = dsq;
+                nearest = m;
+            }
+            if (!questMobs.isEmpty() && questMobs.contains(m.getId()) && dsq < nearestQuestSq) {
+                nearestQuestSq = dsq;
+                nearestQuest = m;
+            }
+        }
+        return nearestQuest != null ? nearestQuest : nearest;
+    }
+
+    /** MP cost of one cast of the bot's primary attack skill (0 = no skill / free / not learned). */
+    private static int primaryAttackMpCon(BotEntry entry, Character bot) {
+        if (entry.attackSkillId == 0) {
+            return 0;
+        }
+        client.Skill skill = client.SkillFactory.getSkill(entry.attackSkillId);
+        if (skill == null) {
+            return 0;
+        }
+        int level = bot.getSkillLevel(skill);
+        if (level <= 0) {
+            return 0;
+        }
+        StatEffect effect = skill.getEffect(level);
+        return effect == null ? 0 : effect.getMpCon();
+    }
+
+    /** Honest MP charge for the grind time behind one abstract kill. Casts are a function of TIME spent
+     *  attacking, not of kills — one cast per kill would overcharge AoE (one cast kills several) and
+     *  undercharge single-target (several casts per kill). So: casts = modeled attack duty × interval /
+     *  attack cycle, each costing the primary skill's mpCon. Keeps casters spending MP → drinking MP
+     *  pots (economy) at the rate real grinding would. Non-casters (mpCon 0) are unaffected. */
+    private void chargeAbstractGrindMp(BotEntry entry, Character bot, long grindMs) {
+        if (entry.abstractModelAttackDuty <= 0) {
+            return;
+        }
+        int mpCon = primaryAttackMpCon(entry, bot);
+        if (mpCon <= 0) {
+            return;
+        }
+        double casts = entry.abstractModelAttackDuty * (grindMs / 1000.0) / BotGrindAdvisor.ATTACK_CYCLE_SECONDS;
+        int mp = (int) Math.round(mpCon * casts);
+        if (mp > 0) {
+            bot.addMP(-Math.min(mp, bot.getMp()));
+        }
+    }
+
+    void stepMovementCore(BotEntry entry,
+                          Point targetPos,
+                          boolean runAiTick) {
+        // Central guard: a bot parked in an idle chair (break/chill/inert/FM shout) must stand before it
+        // navigates anywhere. The sit branches all return before reaching movement, so this only fires on
+        // a genuine move — the single chokepoint that covers every path that resumes locomotion.
+        BotChairManager.standIfSeated(entry.bot);
+        // LOD1 (unobserved) movement: replace nav-resolve + physics with a motion-plan lerp. Gated to
+        // covered states so airborne/special-state bots keep real physics. This zeroes the move/nav
+        // tick cost for the unobserved population (design §3).
+        // Y-band gate: only motion-plan when the goal is within the bot's REAL basic-attack vertical
+        // reach (BotCombatManager.withinAttackYReach, the same box combat targeting uses). The motion
+        // plan freezes Y, so a cross-level target would be un-hittable at the frozen Y and the bot would
+        // farm only its own platform — a combat-fidelity loss. Beyond the band we fall through to real
+        // physics, which navigates the level change (original fidelity). A null goal = idle in place.
+        if (cfg.SIMPLIFY_UNOBSERVED_BOTS_PHYSICS && lod1MotionPlanCovered(entry)
+                && (targetPos == null || BotCombatManager.withinAttackYReach(entry.bot.getPosition(), targetPos))) {
+            tickMotionPlan(entry, targetPos);
+            return;
+        }
+        // Real physics owns movement from here on. A LOD1 bot that falls through (market/gacha
+        // errand, fidget, climb/swim, cross-level target) moves for REAL, so the motion plan frozen
+        // at the LOD downgrade is stale from this tick on — drop it, or materializeBotToLod0 would
+        // rewind the bot to the freeze point (a visible teleport-back when a player loads the map).
+        if (entry.lod == BotEntry.Lod.LOD1) {
+            entry.motionFrom = null;
+            entry.motionTo = null;
+        }
+        BotNavigationManager.NavigationDirective navDirective = BotNavigationManager.resolveTarget(entry, targetPos, runAiTick);
+        if (navDirective.consumedTick) {
+            return;
+        }
+
+        Point steeringTarget = navDirective.targetPos;
+        if (entry.moveTargetPrecise && entry.navEdge == null) {
+            entry.navPreciseTarget = true;
+        }
+        if (BotFidgetManager.tryHandleTick(entry, steeringTarget, runAiTick)) {
+            return;
+        }
+
+        tickMovementPhase(entry, steeringTarget, runAiTick);
+        if (runAiTick && !entry.inAir && !entry.climbing) {
+            BotNavigationManager.tryExecuteCommittedEdgeAfterGroundMovement(entry, targetPos);
+        }
+        tickStuckDetection(entry);
+        clearReachedMoveTarget(entry);
+    }
+
+    private void tickMovementPhase(BotEntry entry, Point targetPos, boolean runAiTick) {
+        if (entry.climbing) {
+            BotMovementManager.tickClimbing(entry, targetPos, runAiTick);
+        } else if (isSwimMap(entry) && entry.inAir) {
+            BotMovementManager.tickSwimming(entry, targetPos);
+        } else if (entry.inAir) {
+            BotMovementManager.tickAirborne(entry, targetPos);
+        } else {
+            BotMovementManager.tickGrounded(entry, targetPos);
+        }
+    }
+
+    private static boolean isSwimMap(BotEntry entry) {
+        return entry.bot != null && entry.bot.getMap() != null && entry.bot.getMap().isSwim();
+    }
+
+    private void clearReachedMoveTarget(BotEntry entry) {
+        if (entry.moveTarget == null) {
+            return;
+        }
+        Point botPos = entry.bot.getPosition();
+        int arrivalDist = entry.moveTargetPrecise ? 8 : BotMovementManager.cfg.STOP_DIST;
+        if (Math.abs(botPos.x - entry.moveTarget.x) <= arrivalDist
+                && Math.abs(botPos.y - entry.moveTarget.y) <= arrivalDist) {
+            entry.moveTarget = null;
+            entry.moveTargetPrecise = false;
+        }
+    }
+
+    private static void updateObservedOwnerMotion(BotEntry entry, Point ownerPos) {
+        if (entry == null || ownerPos == null) {
+            return;
+        }
+        entry.observedOwnerStepX = entry.lastOwnerPos == null ? 0 : ownerPos.x - entry.lastOwnerPos.x;
+        entry.observedOwnerStepY = entry.lastOwnerPos == null ? 0 : ownerPos.y - entry.lastOwnerPos.y;
+    }
+
+    private static void clearFarmAnchorOnMapChange(BotEntry entry, Character bot) {
+        if (entry == null || bot == null || entry.farmAnchor == null) {
+            return;
+        }
+        if (entry.farmAnchorMapId != bot.getMapId()) {
+            entry.farmAnchor = null;
+            entry.farmAnchorMapId = -1;
+            if (entry.moveTargetPrecise) {
+                entry.moveTarget = null;
+                entry.moveTargetPrecise = false;
+            }
+        }
+    }
+
+    private static void clearPatrolOnMapChange(BotEntry entry, Character bot) {
+        if (entry == null || bot == null || entry.patrolRegionId < 0) {
+            return;
+        }
+        if (entry.patrolMapId != bot.getMapId()) {
+            entry.patrolRegionId = -1;
+            entry.patrolMapId = -1;
+            entry.patrolWanderTarget = null;
+        }
+    }
+
+    private static void tickStuckDetection(BotEntry entry) {
+        if (!BotPerformanceMonitor.enabled()) {
+            doStuckDetection(entry);
+            return;
+        }
+
+        long startedAt = System.nanoTime();
+        try {
+            doStuckDetection(entry);
+        } finally {
+            BotPerformanceMonitor.record("stuck-detect", System.nanoTime() - startedAt);
+        }
+    }
+
+    private static void doStuckDetection(BotEntry entry) {
+        entry.unstuckCooldownMs = BotMovementManager.tickDown(entry.unstuckCooldownMs);
+
+        tickFrozenAirborneWatchdog(entry);
+
+        // Only detect/act while actively navigating — idling near owner is not stuck.
+        if (entry.inAir || entry.climbing
+                || entry.graphWarmupFallback
+                || (entry.navEdge == null && entry.moveTarget == null)) {
+            entry.stuckMs = 0;
+            entry.stuckCheckX = Integer.MIN_VALUE;
+            return;
+        }
+
+        Point botPos = entry.bot.getPosition();
+        if (entry.stuckCheckX == Integer.MIN_VALUE) {
+            entry.stuckCheckX = botPos.x;
+            entry.stuckCheckY = botPos.y;
+            return;
+        }
+
+        boolean moved = Math.abs(botPos.x - entry.stuckCheckX) > 8
+                || Math.abs(botPos.y - entry.stuckCheckY) > 8;
+        if (moved) {
+            entry.stuckMs = 0;
+            entry.stuckCheckX = botPos.x;
+            entry.stuckCheckY = botPos.y;
+        } else {
+            entry.stuckMs += BotPhysicsEngine.cfg.TICK_MS;
+        }
+
+        boolean pqBlockedLaunch = BotLpqRun.inInstance(entry.bot) && entry.navEdge != null
+                && entry.lastEdgeBlockReason != null && entry.lastEdgeBlockReason.endsWith("-pos");
+        if ((cfg.ENABLE_UNSTUCK || pqBlockedLaunch) && entry.stuckMs >= 500 && entry.unstuckCooldownMs == 0) {
+            entry.stuckMs = 0;
+            entry.stuckCheckX = Integer.MIN_VALUE;
+            BotMovementManager.tickUnstuck(entry);
+        }
+    }
+
+    void tickStunned(BotEntry entry) {
+        BotHurricane.cancel(entry.bot);
+        entry.moveDir = 0;
+        entry.ropeEntryPending = false;
+        entry.downJumpPending = false;
+        entry.fixedAirArc = false;
+        BotMovementManager.clearNavigationState(entry);
+        if (entry.climbing) {
+            BotPhysicsEngine.holdClimb(entry, entry.bot);
+            BotMovementManager.broadcastMovement(entry);
+        } else {
+            tickActionLocked(entry);
+        }
+    }
+
+    private boolean tickActionLocked(BotEntry entry) {
+        if (entry.attackCooldownMs <= 0 && !entry.bot.hasDisease(client.Disease.STUN)) {
+            return false;
+        }
+        if (isSwimMap(entry) && entry.inAir && !entry.climbing) {
+            BotMovementManager.tickSwimming(entry, null);
+        } else if (entry.inAir) {
+            BotMovementManager.tickAirborne(entry, null);
+        } else if (!entry.climbing) {
+            // Ground physics must keep ticking during attack lock so prior walk momentum decays
+            // via friction, walk-offs trigger falls, and broadcastMovement updates stance from
+            // WALK→STAND. Without this the client extrapolates the last walk packet for the
+            // entire animation lock and the bot visibly "walks in place" until cooldown ends.
+            // External forces (mob knockback) replace this state via applyAirKnockback /
+            // beginKnockback before this tick runs, so passing null target is safe.
+            BotMovementManager.tickGrounded(entry, null);
+        }
+        return true;
+    }
+
+
+    void reloginBot(int charId, int ownerCharId, int world, int channel) {
+        Character owner = Server.getInstance()
+                .getWorld(world)
+                .getPlayerStorage()
+                .getCharacterById(ownerCharId);
+        if (owner == null) return; // owner logged off — skip
+
+        try {
+            Character botChar = loadOfflineBot(charId, world, channel);
+
+            BotEntry entry = registerSpawnedBot(ownerCharId, owner, botChar);
+            issueFollowOwner(entry);
+            after(randMs(900, 1100), () -> {
+                botSay(botChar, "back!!");
+                botChar.changeFaceExpression(Emote.HAPPY.getValue());
+            });
+        } catch (SQLException e) {
+            log.warn("reloginBot: failed to reload charId={}", charId, e);
+        }
+    }
+
+    private static final List<String> RESPAWN_REPLIES = List.of(
+            "ouch... omw back", "died lol, running back", "rip. be right back",
+            "that hurt, coming back now", "welp. respawning, omw"
+    );
+
+    private void respawnBot(BotEntry entry, Character bot, Character owner) {
+        entry.deadUntil = 0;
+        long deathNow = System.currentTimeMillis();
+        boolean autopilot = BotAutopilotManager.isActive(entry);
+        if (autopilot) {
+            // Chain rapid deaths into a streak (an occasional death resets it); a streak means the bot
+            // is stuck dying on one lethal route, handled by the death-loop breaker below.
+            entry.autopilotDeathStreak = (entry.autopilotLastDeathAtMs > 0
+                    && deathNow - entry.autopilotLastDeathAtMs <= BotAutopilotManager.DEATH_LOOP_WINDOW_MS)
+                    ? entry.autopilotDeathStreak + 1 : 1;
+            entry.autopilotLastDeathAtMs = deathNow;
+        }
+
+        // Standard PQ/event death exit, identical to a real player pressing OK on the death popup
+        // (ChangeMapHandler): eim.revivePlayer runs the script's playerRevive (unregister + maybe
+        // end the run if the leader leaves or the team drops below minimum), then respawn to the
+        // event's return map. There is NO legal teleport to a teammate, so the old warp-to-owner is
+        // gone. The "stay dead while a teammate is still alive here" wait happens in handleDeadTick,
+        // so by the time we get here the bot is the last live member in its map (all dead/advanced).
+        var botEim = bot.getEventInstance();
+        if (botEim != null && (bot.getMap() == null || !bot.getMap().isCPQMap())) {
+            if (botEim.revivePlayer(bot)) {
+                bot.respawn(bot.getMap().getReturnMapId());
+            }
+            if (!groundAfterMapChange(entry, bot)) {
+                Point cur = bot.getPosition();
+                Point ground = BotPhysicsEngine.findGroundPoint(bot.getMap(), new Point(cur.x, cur.y - 1));
+                BotPhysicsEngine.teleportTo(entry, bot, ground != null ? ground : cur);
+                BotMovementManager.resetEntryStateAfterTeleport(entry);
+                BotMovementManager.broadcastMovement(entry);
+            }
+            botSay(bot, randomReply(RESPAWN_REPLIES));
+            bot.changeFaceExpression(Emote.GLARE.getValue());
+            return;
+        }
+        // CPQ (no tomb — Character.playerDead returns early on CP loss) and owner-event / PQ-hook
+        // cases the bot isn't itself an EIM member: keep the legacy handling.
+        boolean inEvent = (owner != null && owner.getEventInstance() != null)
+                || BotPqHooks.requiresGrind(entry, bot)
+                || BotPqHooks.requiresFollow(entry, bot)
+                || BotZakumPqRun.isPqMap(bot.getMapId());
+        if (inEvent && owner != null) {
+            respawnAtOwner(entry, bot, owner);
+            return;
+        }
+
+        // Player-legal respawn: revive in the return map with the standard 50 HP —
+        // the exact Character.respawn path ChangeMapHandler runs for real players —
+        // then walk back through portals like anyone else (follow/autopilot travel
+        // handles the trip; autopot tops the HP back up).
+        // Death-loop breaker: when stuck dying on the same route, revive in a safe town instead of the
+        // dungeon return map (and shun that route so the next decide picks somewhere safer).
+        int reviveMapId = bot.getMap().getReturnMapId();
+        boolean escapedLoop = false;
+        if (autopilot && entry.autopilotDeathStreak >= BotAutopilotManager.DEATH_LOOP_THRESHOLD) {
+            int town = BotAutopilotManager.onDeathLoop(entry, bot, deathNow);
+            if (town != -1) {
+                reviveMapId = town;
+                escapedLoop = true;
+                // onDeathLoop drops the autopilot pick (autopilotMapId=-1) but the bot is still
+                // grinding=true from before it died. That inconsistent inert+grinding state makes
+                // tickIdleEntry's guard skip maybeRecoverInertAutopilot, so the bot never re-decides
+                // and stands SILENTLY in town forever (never reaching the "no spot -> ask for scroll"
+                // path). clearMode restores a consistent idle state so recovery re-decides on arrival.
+                clearMode(entry);
+            }
+        }
+        bot.respawn(reviveMapId);
+        if (!groundAfterMapChange(entry, bot)) {
+            // Died in a map that is its own return map (e.g. a town): no map change
+            // happened, so revive the physics state in place.
+            Point cur = bot.getPosition();
+            Point ground = BotPhysicsEngine.findGroundPoint(bot.getMap(), new Point(cur.x, cur.y - 1));
+            BotPhysicsEngine.teleportTo(entry, bot, ground != null ? ground : cur);
+            BotMovementManager.resetEntryStateAfterTeleport(entry);
+            BotMovementManager.broadcastMovement(entry);
+        }
+        if (!escapedLoop) { // onDeathLoop already announced the town retreat
+            botSay(bot, randomReply(RESPAWN_REPLIES));
+        }
+        bot.changeFaceExpression(Emote.GLARE.getValue());
+    }
+
+    private void respawnAtOwner(BotEntry entry, Character bot, Character owner) {
+        bot.updateHp(bot.getMaxHp());
+
+        if (bot.getMapId() != owner.getMapId()) {
+            bot.forceChangeMap(owner.getMap(), owner.getMap().findClosestPortal(owner.getPosition()));
+        }
+        Point ownerPos = owner.getPosition();
+        Point spawnPos = bot.getMap().getPointBelow(new Point(ownerPos.x, ownerPos.y - 1));
+        BotPhysicsEngine.teleportTo(entry, bot, spawnPos != null ? spawnPos : ownerPos);
+        BotMovementManager.resetEntryStateAfterTeleport(entry);
+        BotMovementManager.broadcastMovement(entry);
+        botSay(bot, "back!");
+        bot.changeFaceExpression(Emote.GLARE.getValue());
+    }
+
+    // -------------------------------------------------------------------------
+    // Monster control hand-off
+    // -------------------------------------------------------------------------
+
+    /**
+     * Bots can't drive mob AI (BotClient.sendPacket is a no-op), so any monster
+     * assigned to a bot as controller would freeze. Release it from the bot and
+     * let the upstream controller-selection SSOT ({@link Monster#aggroUpdateController})
+     * pick an eligible real player, or leave it released if none is eligible.
+     * Bots and hidden GMs are excluded by that SSOT, so neither is ever handed control.
+     */
+    private static void tickReleaseMonsterControl(Character bot) {
+        java.util.Collection<Monster> controlled = bot.getControlledMonsters();
+        if (controlled.isEmpty()) return;
+
+        for (Monster monster : controlled) {
+            monster.aggroRedirectController();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Utility
+    // -------------------------------------------------------------------------
+
+    void botSay(Character bot, String text) {
+        String s = sanitizeChat(text);
+        MapleMap map = bot.getMap();
+        if (map == null) return; // bot left the world between scheduling and firing this chat
+        if (map.isObservedByPlayer()) {
+            map.broadcastMessage(PacketCreator.getChatText(bot.getId(), s, false, 0));
+        }
+        BotWorldGraphWebServer.recordChat(bot.getMapId(), bot.getName(), s);
+    }
+
+    // Common typographic chars an LLM/source string may slip in; the v83 client chat
+    // charset (usually US-ASCII) can't encode them, so they render as '?'. Map to ASCII.
+    private static final Map<java.lang.Character, String> CHAT_CHAR_FALLBACKS = Map.ofEntries(
+            Map.entry('—', "-"),    // em dash
+            Map.entry('–', "-"),    // en dash
+            Map.entry('‘', "'"),    // left single quote
+            Map.entry('’', "'"),    // right single quote / apostrophe
+            Map.entry('“', "\""),   // left double quote
+            Map.entry('”', "\""),   // right double quote
+            Map.entry('…', "..."),  // ellipsis
+            Map.entry(' ', " "));   // non-breaking space
+
+    private static final java.nio.charset.CharsetEncoder CHAT_ENCODER =
+            CharsetConstants.CHARSET.newEncoder();
+
+    /**
+     * Replaces characters the chat charset ({@link CharsetConstants#CHARSET}) can't encode —
+     * which the client renders as '?' — with ASCII equivalents, logging a warning so the
+     * offending source string can be located and fixed. Fast no-op for already-clean text.
+     */
+    static synchronized String sanitizeChat(String text) {
+        if (text == null || CHAT_ENCODER.canEncode(text)) {
+            return text;
+        }
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (CHAT_ENCODER.canEncode(c)) {
+                sb.append(c);
+            } else {
+                sb.append(CHAT_CHAR_FALLBACKS.getOrDefault(c, "?"));
+            }
+        }
+        String cleaned = sb.toString();
+        log.warn("Bot chat had non-encodable char(s) (would show as '?'): \"{}\" -> \"{}\"", text, cleaned);
+        return cleaned;
+    }
+
+    void botSay(Character bot, ReplyChannel channel, String text) {
+        switch (channel) {
+            case PARTY, WHISPER -> botSayParty(bot, text);
+            default -> botSay(bot, text);
+        }
+    }
+
+    /** Bot-to-bot visible say — routes MAP→map broadcast, PARTY→party, WHISPER→party fallback. */
+    void botSay(BotEntry entry, String text) {
+        botSay(entry.bot, entry.replyChannel, text);
+    }
+
+    /** Owner-directed reply — routes MAP→map broadcast, PARTY→party, WHISPER→whisper to owner. */
+    public void botReply(BotEntry entry, String text) {
+        switch (entry.replyChannel) {
+            case PARTY -> botSayParty(entry.bot, text);
+            case WHISPER -> {
+                // While an admin debug binding is fresh, whisper replies go to the commander.
+                Character owner = commanderOrOwner(entry);
+                if (owner != null && owner.getClient() != null) {
+                    owner.sendPacket(PacketCreator.getWhisperReceive(
+                            entry.bot.getName(),
+                            entry.bot.getClient().getChannel() - 1,
+                            false, sanitizeChat(text)));
+                }
+            }
+            default -> botSay(entry.bot, text);
+        }
+    }
+
+    /**
+     * Broadcasts via party chat so the owner sees the message even when they're
+     * on a different map. Falls back to map chat if the bot has no party.
+     */
+    void botSayParty(Character bot, String text) {
+        Party party = bot.getParty();
+        if (party != null && bot.getClient() != null && bot.getClient().getWorldServer() != null) {
+            bot.getClient().getWorldServer().partyChat(party, sanitizeChat(text), bot.getName());
+        } else {
+            botSay(bot, text);
+        }
+    }
+
+    /**
+     * Whisper-driven command to a specific owned bot. Bypasses the global name-
+     * prefix routing in handleChat because the whisper target already identifies
+     * the bot uniquely. No-op if target isn't a bot owned by the speaker.
+     */
+    public void handleWhisperToBot(Character speaker, Character target, String message) {
+        if (speaker == null || target == null || message == null) {
+            return;
+        }
+        if (!(target.getClient() instanceof BotClient)) {
+            return;
+        }
+        // Resolve the bot's entry under its ACTIVE owner (a self-owned bot owns itself), so an admin
+        // can whisper-command a foreign/self-owned bot — not just the speaker's own bots.
+        Character botOwner = getActiveOwnerByBotCharId(target.getId());
+        if (botOwner == null) {
+            return;
+        }
+        BotEntry entry = getBotEntry(botOwner.getId(), target.getId());
+        if (entry == null) {
+            return;
+        }
+        // Whisperer isn't the real owner: only a gm6 admin may drive a foreign bot. Bind them as the
+        // debug commander so the bot's WHISPER reply goes back to the command giver (commanderOrOwner)
+        // rather than the owner — which for a self-owned bot is the bot itself, dropping the reply.
+        if (speaker.getId() != botOwner.getId()) {
+            if (speaker.gmLevel() < 6) {
+                return;
+            }
+            bindDebugCommander(entry, speaker);
+        }
+        entry.replyChannel = ReplyChannel.WHISPER;
+        BotChatManager.handleChat(entry, message);
+    }
+
+    private boolean consumeAiTick(BotEntry entry) {
+        // Accumulate the REAL elapsed interval, not a constant: a LOD1 bot ticks at LOD1_TICK_MS
+        // (500ms) via retask, so adding a fixed TICK_MS would make its AI ticks fire 10x too slowly.
+        // tickIntervalMs is the SSOT for the bot's live cadence (set at registration + by retask);
+        // fall back to TICK_MS for entries built outside registerBotInternal (unit-test harnesses).
+        int elapsed = entry.tickIntervalMs > 0 ? entry.tickIntervalMs : BotMovementManager.cfg.TICK_MS;
+        entry.aiTickAccumulatorMs += elapsed;
+        if (entry.aiTickAccumulatorMs < cfg.AI_TICK_MS) {
+            return false;
+        }
+
+        entry.aiTickAccumulatorMs -= cfg.AI_TICK_MS;
+        return true;
+    }
+
+    // ===== Bot accessors used by the androidequip.cpp BotEquipHandler =====
+    /** The Character objects of every spawned bot owned by the given player (empty if none). */
+    public List<Character> getOwnedBotCharacters(int ownerCharId) {
+        List<Character> result = new ArrayList<>();
+        List<BotEntry> entries = bots.get(ownerCharId);
+        if (entries != null) {
+            for (BotEntry e : entries) {
+                Character b = e.getBot();
+                if (b != null) {
+                    result.add(b);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * !inspect target curation for the bot-equip (F8) window. A GM picks ONE character (any logged-in
+     * character — bot or real player) to append to their window roster so its inventory is visible; no
+     * follow or formation side effect. {@code targetCharId <= 0} clears the binding.
+     */
+    public void setInspectTarget(int gmCharId, int targetCharId) {
+        if (targetCharId > 0) {
+            inspectTargets.put(gmCharId, targetCharId);
+        } else {
+            inspectTargets.remove(gmCharId);
+        }
+    }
+
+    /** The GM's current !inspect target as a live Character, or null if unset/offline. */
+    public Character getInspectTarget(int gmCharId) {
+        Integer targetId = inspectTargets.get(gmCharId);
+        if (targetId == null) {
+            return null;
+        }
+        for (net.server.world.World w : Server.getInstance().getWorlds()) {
+            Character chr = w.getPlayerStorage().getCharacterById(targetId);
+            if (chr != null) {
+                return chr;
+            }
+        }
+        return null;
+    }
+
+}
