@@ -31,31 +31,31 @@ final class BotNavigationGraphProvider {
     private static final Logger log = LoggerFactory.getLogger(BotNavigationGraphProvider.class);
 
     // 47: forbidFallDown footholds stay solid during down-jump grace (landing predictions
-    //     change on maps with stacked platforms) — caches must rebuild.
+    //     change on maps with stacked platforms) â€” caches must rebuild.
     // 48: WZ info/fs reinterpreted as slipperiness (was a bogus ground-speed scale): walk
     //     step on fs maps jumps back to full speed, runways stretch by 1/fs.
     // 49: down-jumps capped at DOWN_JUMP_MAX_DROP_PX (client probes a bounded range below;
     //     Orbis-tower-style 860px down-jump edges must disappear).
     // 50: indexed ground lookups (findBelowIndexed) - tie-breaks between overlapping footholds
     //     can differ from the tree's traversal order (Ellinia: 2 of 5151 edges).
-    // 54: client-true landings — touchdown halves carried momentum (packet fit), so slippery
+    // 54: client-true landings â€” touchdown halves carried momentum (packet fit), so slippery
     //     post-landing brake sims stop in ~1/4 the distance and previously-rejected icy hop
     //     edges (El Nath 267->277->278->279) become stable.
-    // 55: disasm-true air control (CVecCtrl::CalcFloat @ 0x9b2c3c) — input only nudges vx
+    // 55: disasm-true air control (CVecCtrl::CalcFloat @ 0x9b2c3c) â€” input only nudges vx
     //     inside an 8.93 x fs px/s band (no walkSpeed air cap; counter-strafe pins at the
     //     band edge) and no-input flight drags 1 x fs (100 x fs at terminal fall). Committed
     //     arcs still fly the launch key held, so constant-stepX arc sims stay exact.
     // 74: flat-floor contact time precedes later wall collisions during the same airborne tick (LPQ tower floor tunneling).
     // v75: sweep rope-grab hitboxes between physics samples (OPQ ascent base-stat ladder).
-    private static final int GRAPH_VERSION = 77; // 77: OPQ Room 303 attached upward wall junctions block ground walking. // 76: OPQ entrance clouds use ropes, never the projected shortcut portal. // 51: kinetic slippery model + snowshoes; 52: brake-to-stop landings; 53: glide-unless-edge stop policy (slipperyStopDir); 56: uncap straight-drop launch windows (full droppable span, no +/-20 fragmentation); 57: remove the (empirically wrong) 300px down-jump drop cap - down-jumps fall until landing; 58: rope-grab reach counts descent below the ledge (mid-rope jump-grabs from adjacent platforms); 59: fall-sim caps to map height not 1500ms - long single-fall descents (tall shafts: Ellinia tree, Perion) now generate DROP/JUMP/ROPE edges; 60: teleport (mage) + flash-jump (thief) skill edges; 61: teleport snap = physics SSOT intent (BotPhysicsEngine.teleportLanding — horizontal same-level priority, blocked-if-none); 62: rope-exit/transfer CLIMB edges carry a Y launch window [launchMinY,launchMaxY] (collapses ~anchorYs×3 near-duplicate same-region jump-offs into one windowed edge, mirroring ground-jump X windows); 63: serialized source-bucketed routes from every region to every portal region; 64: flash-jump edges carry an X launch window (same expand/boundary treatment as ground JUMP) — collapses ~per-anchor FJ point-edges into one windowed edge, mirroring JUMP/DROP/rope windows; 65: teleport edges carry an X launch window too (same treatment; exec computes the blink dest live from the bot's position via the physics SSOT) + down-teleport snaps to FURTHEST platform within range + horizontal y-snap band 70→75; 66: ground-walk follows the standing foothold's prev/next chain across a joined fork (client SN model) instead of snapping down onto the lower overlapping arm — fixes the region-11 (100040000) fork walk-trap that stranded/oscillated bots on the dead-end spur; 67: skip phantom cross-region JUMP/FLASH_JUMP edges whose landing is on ground the SOURCE region already covers (overlapping/coincident chains, e.g. map 600020100 r73 ramp-foot over r97 flat) — such an edge can never change region (client tracks the standing-foothold chain) and trapped bots oscillating against an unexecutable jump-pos gate (NOTE: 67 was documented but the version constant was never bumped — 68 finally regenerates those stale caches too); 68: directional walk-off DROP landings authored via simulateWalkOffLanding from the runway anchor (execution SSOT) — a real dismount leaves the ground up to a sub-tick walk step PAST the lip and can land on a different platform than a lip-pixel fall (100000102: the r18 walk-off lands the y=120 bookshelf, not the floor), so lip-authored edges were unexecutable as committed and parked bots at the runway anchor; 69: directional walk-off DROP edges are authored only when the landing REGION is stable across live launch-state variance (fractional physX phase, carryMs, arrival hspeed — walkOffLandingVariants) — a knife-edge landing authored from the single baseline sim was a planner lie the executor could never reproduce (910000000: DROP r4->r5 landed r6 live, replanning through the same edge in a loop); 70: (a) client-true wall collidability (v95 PDB + v83 CollisionDetectFloat @0x9b36bc): ground walking scans NO walls at all (CVecCtrl::CalcWalk is chain-only; the region model IS the chain, so region-constrained sampling is the junction stop; live-verified both directions on 600020100 x=-1315), and airborne wall collision is scoped by WZ zMass group (a wall collides only for movers of its own structure group or the map base group — Foothold.isCollidableWall chain heuristic deleted), so walk-off/runway/arc sims across foreign-structure walls all change; (b) the v67 phantom shared-ground landing guard now also covers TELEPORT edges (600020100 TELEPORT r97->r73 landed the shared foot — unexecutable tele-pos park); 71: directional walk-off DROP runways are simulated from the SOURCE region's own foothold instead of a coordinate lookup at the runway anchor — findGroundFoothold also probes MAX_SLOPE_UP ABOVE the point, so an anchor under an unrelated overhead platform authored a walk-off along THAT platform (100000102: anchors r7@-293,-12 and r16@-308/-238,92 resolved to r5/r15); the executor now sims the same dismount from the motor's continuity foothold, so builder and executor must agree on which chain the runway is on
+    private static final int GRAPH_VERSION = 79; // 79: rope exits must survive every retained wall collision group. // 78: sweep the ballistic apex in shared jump/rope simulations and live physics. // 77: OPQ Room 303 attached upward wall junctions block ground walking. // 76: OPQ entrance clouds use ropes, never the projected shortcut portal. // 51: kinetic slippery model + snowshoes; 52: brake-to-stop landings; 53: glide-unless-edge stop policy (slipperyStopDir); 56: uncap straight-drop launch windows (full droppable span, no +/-20 fragmentation); 57: remove the (empirically wrong) 300px down-jump drop cap - down-jumps fall until landing; 58: rope-grab reach counts descent below the ledge (mid-rope jump-grabs from adjacent platforms); 59: fall-sim caps to map height not 1500ms - long single-fall descents (tall shafts: Ellinia tree, Perion) now generate DROP/JUMP/ROPE edges; 60: teleport (mage) + flash-jump (thief) skill edges; 61: teleport snap = physics SSOT intent (BotPhysicsEngine.teleportLanding â€” horizontal same-level priority, blocked-if-none); 62: rope-exit/transfer CLIMB edges carry a Y launch window [launchMinY,launchMaxY] (collapses ~anchorYsÃ—3 near-duplicate same-region jump-offs into one windowed edge, mirroring ground-jump X windows); 63: serialized source-bucketed routes from every region to every portal region; 64: flash-jump edges carry an X launch window (same expand/boundary treatment as ground JUMP) â€” collapses ~per-anchor FJ point-edges into one windowed edge, mirroring JUMP/DROP/rope windows; 65: teleport edges carry an X launch window too (same treatment; exec computes the blink dest live from the bot's position via the physics SSOT) + down-teleport snaps to FURTHEST platform within range + horizontal y-snap band 70â†’75; 66: ground-walk follows the standing foothold's prev/next chain across a joined fork (client SN model) instead of snapping down onto the lower overlapping arm â€” fixes the region-11 (100040000) fork walk-trap that stranded/oscillated bots on the dead-end spur; 67: skip phantom cross-region JUMP/FLASH_JUMP edges whose landing is on ground the SOURCE region already covers (overlapping/coincident chains, e.g. map 600020100 r73 ramp-foot over r97 flat) â€” such an edge can never change region (client tracks the standing-foothold chain) and trapped bots oscillating against an unexecutable jump-pos gate (NOTE: 67 was documented but the version constant was never bumped â€” 68 finally regenerates those stale caches too); 68: directional walk-off DROP landings authored via simulateWalkOffLanding from the runway anchor (execution SSOT) â€” a real dismount leaves the ground up to a sub-tick walk step PAST the lip and can land on a different platform than a lip-pixel fall (100000102: the r18 walk-off lands the y=120 bookshelf, not the floor), so lip-authored edges were unexecutable as committed and parked bots at the runway anchor; 69: directional walk-off DROP edges are authored only when the landing REGION is stable across live launch-state variance (fractional physX phase, carryMs, arrival hspeed â€” walkOffLandingVariants) â€” a knife-edge landing authored from the single baseline sim was a planner lie the executor could never reproduce (910000000: DROP r4->r5 landed r6 live, replanning through the same edge in a loop); 70: (a) client-true wall collidability (v95 PDB + v83 CollisionDetectFloat @0x9b36bc): ground walking scans NO walls at all (CVecCtrl::CalcWalk is chain-only; the region model IS the chain, so region-constrained sampling is the junction stop; live-verified both directions on 600020100 x=-1315), and airborne wall collision is scoped by WZ zMass group (a wall collides only for movers of its own structure group or the map base group â€” Foothold.isCollidableWall chain heuristic deleted), so walk-off/runway/arc sims across foreign-structure walls all change; (b) the v67 phantom shared-ground landing guard now also covers TELEPORT edges (600020100 TELEPORT r97->r73 landed the shared foot â€” unexecutable tele-pos park); 71: directional walk-off DROP runways are simulated from the SOURCE region's own foothold instead of a coordinate lookup at the runway anchor â€” findGroundFoothold also probes MAX_SLOPE_UP ABOVE the point, so an anchor under an unrelated overhead platform authored a walk-off along THAT platform (100000102: anchors r7@-293,-12 and r16@-308/-238,92 resolved to r5/r15); the executor now sims the same dismount from the motor's continuity foothold, so builder and executor must agree on which chain the runway is on
     /** The nav-graph cache version. The partition cache derives from these graphs, so it keys its own
-     *  on-disk cache by this number — a graph-version bump invalidates persisted partitions too. */
+     *  on-disk cache by this number â€” a graph-version bump invalidates persisted partitions too. */
     static int graphVersion() {
         return GRAPH_VERSION;
     }
 
     // Fired (with the map id) whenever a graph is rebuilt, so higher layers can drop data derived from the
-    // old graph (e.g. BotMapPartitionProvider's cache). A listener slot — NOT a direct call — so this
+    // old graph (e.g. BotMapPartitionProvider's cache). A listener slot â€” NOT a direct call â€” so this
     // provider stays free of any dependency on those layers (the dependency only flows the other way).
     private static volatile java.util.function.IntConsumer graphRebuildListener = id -> {};
 
@@ -71,14 +71,14 @@ final class BotNavigationGraphProvider {
     private static final int MAX_PROFILED_JUMP_REGIONS = 5;
     private static final int FAST_WARMUP_MAX_FOOTHOLDS = 200;
     // Teleport skill edges. Bots are modelled at max teleport range (150px, skill L20) regardless of
-    // their actual level — the graph isn't keyed by teleport level and mages max it fast, so honoring
+    // their actual level â€” the graph isn't keyed by teleport level and mages max it fast, so honoring
     // 130/140/150 separately would triple the edges for a transient low-level case (see design notes).
     // Package-visible: SSOT for teleport reach, shared with BotNavigationManager's intra-region express.
     static final int TELEPORT_RANGE_PX = 150;
     static final int TELEPORT_Y_SNAP_PX = 75;  // horizontal teleport: vertical snap band to a platform (eyeball; client-verify if precision matters)
     private static final int TELEPORT_COST_MS = 150;   // near-instant cast+recovery (tunable)
     // Base dir is overridable so tests never persist their (often trimmed) graphs into the live
-    // production cache — a trimmed map at base profile would otherwise overwrite the real graph and
+    // production cache â€” a trimmed map at base profile would otherwise overwrite the real graph and
     // strand bots with region=-1. Tests point -Dbot.nav.cacheDir at cache/bot-nav-test; prod uses the default.
     private static final Path CACHE_BASE_DIR = Path.of(System.getProperty("bot.nav.cacheDir", "cache/bot-nav"));
     private static final Path CACHE_DIR = CACHE_BASE_DIR.resolve("v" + GRAPH_VERSION);
@@ -137,7 +137,7 @@ final class BotNavigationGraphProvider {
 
     private static final Map<GraphCacheKey, BotNavigationGraph> GRAPHS = new ConcurrentHashMap<>();
     /** mapId -> one cached graph for that map (any profile). O(1) backing for {@link #peekGraph(MapleMap)},
-     *  which physics hits per ground sample — scanning GRAPHS there was a profiler hot spot at population.
+     *  which physics hits per ground sample â€” scanning GRAPHS there was a profiler hot spot at population.
      *  Kept in sync by {@link #putGraph}/{@link #removeGraph}, the only GRAPHS mutation points. */
     private static final Map<Integer, BotNavigationGraph> ANY_GRAPH_BY_MAP = new ConcurrentHashMap<>();
     private static final Map<GraphCacheKey, CompletableFuture<BotNavigationGraph>> PENDING_GRAPHS = new ConcurrentHashMap<>();
@@ -435,7 +435,7 @@ final class BotNavigationGraphProvider {
         return getOrStartGraphLoad(map, movementProfile, key, false).join();
     }
 
-    /** Movement profiles that currently have a graph cached for {@code mapId} — the web map-graph
+    /** Movement profiles that currently have a graph cached for {@code mapId} â€” the web map-graph
      *  profile picker lists these (default is the speed100/jump100 {@link BotMovementProfile#base()}). */
     static List<BotMovementProfile> cachedProfiles(int mapId) {
         List<BotMovementProfile> out = new ArrayList<>();
@@ -462,7 +462,7 @@ final class BotNavigationGraphProvider {
 
     private static void removeGraph(GraphCacheKey key) {
         GRAPHS.remove(key);
-        // Another profile's graph for the same map may remain — keep the by-map index pointing at one.
+        // Another profile's graph for the same map may remain â€” keep the by-map index pointing at one.
         for (Map.Entry<GraphCacheKey, BotNavigationGraph> entry : GRAPHS.entrySet()) {
             if (entry.getKey().mapId() == key.mapId()) {
                 ANY_GRAPH_BY_MAP.put(key.mapId(), entry.getValue());
@@ -495,7 +495,7 @@ final class BotNavigationGraphProvider {
                 continue;
             }
 
-            // A slip/no-slip mismatch is structurally wrong (different runway/glide physics) —
+            // A slip/no-slip mismatch is structurally wrong (different runway/glide physics) â€”
             // dominate any speed/jump distance, but stay a usable last-resort fallback.
             int distance = Math.abs(key.totalSpeedStat() - requested.totalSpeedStat())
                     + Math.abs(key.totalJumpStat() - requested.totalJumpStat())
@@ -521,7 +521,7 @@ final class BotNavigationGraphProvider {
     }
 
     /** Coarse RAM-attribution readout for the perf log: how many per-(map,profile) graphs are retained
-     *  and their total region count. The graph cache is the prime suspect for bot heap growth — it is
+     *  and their total region count. The graph cache is the prime suspect for bot heap growth â€” it is
      *  never evicted, so this only grows as bots visit more maps. */
     public static String cacheStats() {
         int regions = 0;
@@ -536,7 +536,7 @@ final class BotNavigationGraphProvider {
 
     /** Drop in-memory graphs (+ build reports + collidable sets) for maps with no bot present/committed
      *  for longer than {@code graceMs}. The graph cache is otherwise never evicted, so it grows
-     *  unbounded as bots roam — this caps heap. An evicted graph reloads from the on-disk cache (or
+     *  unbounded as bots roam â€” this caps heap. An evicted graph reloads from the on-disk cache (or
      *  rebuilds) on the next visit, so eviction is cheap to undo. A live bot still holding its
      *  {@code entry.navGraph} reference keeps that object alive until it drops it. Returns the number of
      *  (map,profile) graphs evicted. */
@@ -548,10 +548,10 @@ final class BotNavigationGraphProvider {
         int evicted = 0;
         for (GraphCacheKey key : new ArrayList<>(GRAPHS.keySet())) {
             if (now - MAP_LAST_ACTIVE_MS.getOrDefault(key.mapId(), 0L) < graceMs) {
-                continue; // a bot is here or was recently — keep it warm
+                continue; // a bot is here or was recently â€” keep it warm
             }
             if (PENDING_GRAPHS.containsKey(key)) {
-                continue; // a build is in flight — don't yank it
+                continue; // a build is in flight â€” don't yank it
             }
             removeGraph(key);
             LAST_BUILD_REPORTS.remove(key);
@@ -577,7 +577,7 @@ final class BotNavigationGraphProvider {
     /**
      * Route-ahead prewarm for multi-hop travel: load each map and queue its graph warmup, so
      * the bot doesn't land in graph-warmup fallback at every hop. {@code MapManager.getMap}
-     * itself loads the map from WZ on first touch — heavy, hence the whole loop runs on the
+     * itself loads the map from WZ on first touch â€” heavy, hence the whole loop runs on the
      * warmup executor, never on a bot tick thread.
      */
     static void warmGraphsForRouteAsync(MapManager mapFactory, List<Integer> mapIds,
@@ -808,7 +808,7 @@ final class BotNavigationGraphProvider {
             buildProfile.buildJumpEdgesNs = System.nanoTime() - phaseStartedAt;
 
             // Skill edges (teleport / flash jump): baked into the shared graph, filtered per-bot in
-            // BotNavigationManager.isEdgeUsable by skill possession. Cross-region only — same-platform
+            // BotNavigationManager.isEdgeUsable by skill possession. Cross-region only â€” same-platform
             // express is a runtime decision (the region A* can't hold a self-loop edge).
             for (BotNavigationGraph.Region region : groundRegions) {
                 List<Point> regionAnchors = anchorsByRegionId.getOrDefault(region.id, List.of());
@@ -1172,7 +1172,7 @@ final class BotNavigationGraphProvider {
                 continue;
             }
             // A straight-down drop presses DOWN, but DOWN over a grabbable rope makes physics
-            // grab the rope instead of falling through — that grab is already modelled as a
+            // grab the rope instead of falling through â€” that grab is already modelled as a
             // CLIMB edge (canTopStep/canGrab). Emitting a DROP at the same column produces a
             // phantom edge A* prefers but execution can never satisfy, causing a grab/regrab
             // loop at the rope top. Skip it; descent stays available via the rope CLIMB edges.
@@ -1201,8 +1201,8 @@ final class BotNavigationGraphProvider {
 
     /**
      * True when a straight-down jump from {@code launch} would grab a rope instead of dropping
-     * through the platform. Reuses {@link BotPhysicsEngine#simulateDownJumpRopeGrab} — the exact
-     * physics the rope-entry builder uses for its canTopStep CLIMB edge — so a DROP edge is never
+     * through the platform. Reuses {@link BotPhysicsEngine#simulateDownJumpRopeGrab} â€” the exact
+     * physics the rope-entry builder uses for its canTopStep CLIMB edge â€” so a DROP edge is never
      * authored where execution would grab. Returns false below a rope's bottom (the down-jump arc
      * never reaches the rope), so legitimate downward drops are unaffected.
      */
@@ -1236,7 +1236,7 @@ final class BotNavigationGraphProvider {
 
         // O(1) runway: place the edge startPoint so the bot has room to accelerate
         // to (near) max walk speed before walking off. No candidate iteration, no
-        // runway simulation — just constants from config.
+        // runway simulation â€” just constants from config.
         int runwayPx = BotPhysicsEngine.launchRunwayPx(map, movementProfile);
         int launchX;
         if (direction < 0) {
@@ -1244,7 +1244,7 @@ final class BotNavigationGraphProvider {
         } else {
             launchX = Math.max(from.minX, endpoint.x - runwayPx);
         }
-        // Skip if region too small to fit a meaningful runway — no directional drop here.
+        // Skip if region too small to fit a meaningful runway â€” no directional drop here.
         int actualRunway = Math.abs(launchX - endpoint.x);
         if (actualRunway < Math.min(runwayPx, 20)) {
             return;
@@ -1258,7 +1258,7 @@ final class BotNavigationGraphProvider {
         // executor gate consults (BotNavigationManager.matchesDirectionalDrop). A real dismount
         // leaves the ground up to one sub-tick walk step PAST the lip, which can land on a
         // different platform than a fall from the exact lip pixel (100000102: the r18 walk-off
-        // lands on the y=120 bookshelf, not the floor a lip-pixel fall predicted) — authoring
+        // lands on the y=120 bookshelf, not the floor a lip-pixel fall predicted) â€” authoring
         // from the lip made such edges unexecutable as committed.
         int stepX = BotPhysicsEngine.walkStep(map, movementProfile) * direction;
         // Walk the runway on THIS region's ground. Resolving the standing foothold from
@@ -1289,7 +1289,7 @@ final class BotNavigationGraphProvider {
         // platform edge that flips which region catches the fall. An edge authored from the one
         // baseline outcome is then a lie the planner keeps replanning through (FM 910000000:
         // DROP r4->r5 authored landing x=353 on r5, live phases crossed r5's height at x=370 and
-        // fell to r6, looping r6->r7->r4 forever — pathlog-CabinOpened-2026-07-03). Author the
+        // fell to r6, looping r6->r7->r4 forever â€” pathlog-CabinOpened-2026-07-03). Author the
         // drop only when EVERY live-plausible launch state lands the same region.
         for (BotPhysicsEngine.WalkOffLanding variant : walkOffVariants) {
             if (variant == null || variant.landing() == null || variant.landing().foothold() == null
@@ -1310,15 +1310,15 @@ final class BotNavigationGraphProvider {
 
     /**
      * Jump-edge launch state: the three launchStepX classes {-walkStep, 0, +walkStep} are
-     * COMPLETE even on slippery ground — no extra launch-speed classes or momentum chaining
+     * COMPLETE even on slippery ground â€” no extra launch-speed classes or momentum chaining
      * state are needed. Packet-verified client physics (see Config.AIR_CONTROL_ACCEL_PXSS):
-     * a jump with a direction held snaps to ±walkSpeed at takeoff regardless of ground speed
+     * a jump with a direction held snaps to Â±walkSpeed at takeoff regardless of ground speed
      * (so a directional hop needs no runway and loses nothing to a slow icy start or a
      * halved post-landing slide), and a no-input jump carries the current hspeed (bounded by
-     * ±walkSpeed, and the executor brakes vertical jumps to ~0 first — "jump-slide" gate).
+     * Â±walkSpeed, and the executor brakes vertical jumps to ~0 first â€” "jump-slide" gate).
      * The simulated constant-stepX ballistic arc is exact because the arc flies with the
      * launch direction key HELD (CVecCtrl::CalcFloat @ 0x9b2c3c): held input is a no-op above
-     * the 8.93 x fs px/s input band — it neither accelerates nor clamps a walkSpeed launch —
+     * the 8.93 x fs px/s input band â€” it neither accelerates nor clamps a walkSpeed launch â€”
      * and the no-input drag only applies when no key is held, so vx stays constant.
      */
     private static void addJumpEdges(BotNavigationGraph.Region from,
@@ -1360,7 +1360,7 @@ final class BotNavigationGraphProvider {
                 // already covers (a ramp foot overlapping a flat platform, or coincident chains at the
                 // same height). The client tracks the standing foothold's prev/next chain and never
                 // switches chains on shared ground (CVecCtrl::CalcWalk), so this "jump" cannot actually
-                // change region — A* would commit it and the bot could never execute it (map 600020100
+                // change region â€” A* would commit it and the bot could never execute it (map 600020100
                 // r97->r73: stuck/oscillating). Guard the window's representative endpoint (the landing
                 // the edge actually carries), not the raw per-anchor sim.
                 if (from.surfaceCoversPoint(launchWindow.endPoint().x, launchWindow.endPoint().y,
@@ -1391,14 +1391,14 @@ final class BotNavigationGraphProvider {
     }
 
     /**
-     * Teleport edges: per intent, a horizontal blink (±range, snap to a platform within the vertical
+     * Teleport edges: per intent, a horizontal blink (Â±range, snap to a platform within the vertical
      * band) and vertical blinks up/down (up/down = furthest platform within range). Given the SAME
      * X-launch-window treatment as JUMP/FLASH_JUMP: per (anchor, intent) we expand the contiguous span of
      * launch X that all blink into the same target region and emit ONE windowed edge (adjacent anchors
      * dedup via edgeKeys) instead of one point-edge per anchor. Execution computes the blink dest LIVE
      * from the bot's actual position (BotNavigationManager.tryExecuteTeleport) so any X in the window is a
      * legal full-range hop. Only cross-region landings become edges. Bots are modelled at max range, so no
-     * per-edge distance is stored — usability is just "has teleport".
+     * per-edge distance is stored â€” usability is just "has teleport".
      */
     private static void addTeleportEdges(BotNavigationGraph.Region from,
                                          MapleMap map,
@@ -1408,7 +1408,7 @@ final class BotNavigationGraphProvider {
                                          Map<Integer, List<BotNavigationGraph.Edge>> outgoing,
                                          Set<String> edgeKeys) {
         // Intent-based: ask the physics SSOT (BotPhysicsEngine.teleportLanding) where a left/right/up/down
-        // teleport from this anchor legally lands. Generation never invents a position — physics resolves
+        // teleport from this anchor legally lands. Generation never invents a position â€” physics resolves
         // it (horizontal = closest platform vertically / same-level priority; up/down = furthest within
         // range; null = blocked, no edge).
         for (Point anchor : anchors) {
@@ -1430,7 +1430,7 @@ final class BotNavigationGraphProvider {
                                                  Set<String> edgeKeys) {
         Point dest = BotPhysicsEngine.teleportLanding(map, anchor, dirX, dirY, TELEPORT_RANGE_PX, TELEPORT_Y_SNAP_PX);
         if (dest == null || dest.equals(anchor)) {
-            return; // blocked — no platform to snap to in that direction
+            return; // blocked â€” no platform to snap to in that direction
         }
         BotNavigationGraph.Region to = findRegionBelow(map, regionsById, regionIdByFootholdId, new Point(dest.x, dest.y - 1));
         if (to == null || to.id == from.id) {
@@ -1442,11 +1442,11 @@ final class BotNavigationGraphProvider {
         if (launchWindow == null) {
             return;
         }
-        // Phantom cross-region teleport — same class as the jump guard in addJumpEdges: the landing
+        // Phantom cross-region teleport â€” same class as the jump guard in addJumpEdges: the landing
         // sits on ground the SOURCE region also covers (overlapping foothold chains at the same
         // height), so the post-teleport ground attach cannot be guaranteed to switch chains and the
         // edge may never change region (600020100 TELEPORT r97->r73 landing (-1241,156) on the shared
-        // foot: A* committed it, the bot parked on tele-pos forever — KB oscillation ledger #15).
+        // foot: A* committed it, the bot parked on tele-pos forever â€” KB oscillation ledger #15).
         if (from.surfaceCoversPoint(launchWindow.endPoint().x, launchWindow.endPoint().y,
                 BotNavigationGraph.SHARED_GROUND_Y_PX)) {
             return;
@@ -1564,7 +1564,7 @@ final class BotNavigationGraphProvider {
      * BotPhysicsEngine.simulateFlashJumpLanding). Given the SAME X-launch-window treatment as ground
      * JUMP (expandFlashJumpLaunchWindow / findFlashJumpBoundary): per (anchor, dir) we expand the
      * contiguous span of launch X that all flash-jump into the same target region AND that a plain jump
-     * canNOT reach — FJ earns an edge only where it adds reach, position-aware. Emitting one windowed
+     * canNOT reach â€” FJ earns an edge only where it adds reach, position-aware. Emitting one windowed
      * edge collapses the ~per-anchor point-edges this used to produce into a few windowed edges
      * (adjacent anchors dedup via edgeKeys), mirroring JUMP/DROP/rope windows.
      */
@@ -1599,7 +1599,7 @@ final class BotNavigationGraphProvider {
                     continue;
                 }
                 // Same phantom-edge guard as ground JUMP: skip a flash-jump whose authored landing is on
-                // ground the source region already covers (shared/overlapping chains) — it cannot change
+                // ground the source region already covers (shared/overlapping chains) â€” it cannot change
                 // region. Guard the window endpoint (the landing the edge carries), not the raw sim.
                 if (from.surfaceCoversPoint(launchWindow.endPoint().x, launchWindow.endPoint().y,
                         BotNavigationGraph.SHARED_GROUND_Y_PX)) {
@@ -1725,7 +1725,7 @@ final class BotNavigationGraphProvider {
     /**
      * A launch X is a valid flash-jump launch into {@code targetRegionId} iff it is approachable, the
      * flash-jump from there lands in the target region, AND a plain jump from the same X does NOT reach
-     * the same region (where a plain jump suffices the cheaper JUMP edge covers it — so the FJ window
+     * the same region (where a plain jump suffices the cheaper JUMP edge covers it â€” so the FJ window
      * spans only the X-range FJ uniquely adds; their union covers every reachable launch X with no gap).
      */
     private static boolean isValidFlashJumpLaunchX(BotNavigationGraph.Region from,
@@ -2178,7 +2178,7 @@ final class BotNavigationGraphProvider {
     }
 
     /** True when the launch pixel sits pinned against a wall face that actually collides for a
-     *  mover launching from {@code from} (client zMass rule — walls of unrelated structures are
+     *  mover launching from {@code from} (client zMass rule â€” walls of unrelated structures are
      *  invisible and must not suppress the launch). */
     private static boolean isBlockedWallBoundaryLaunch(BotNavigationGraph.Region from, MapleMap map, Point launchPoint) {
         if (map == null || map.getFootholds() == null || launchPoint == null) {
@@ -2210,7 +2210,7 @@ final class BotNavigationGraphProvider {
         return BotPhysicsEngine.canWalkGroundStep(map, fromPoint, launchPoint.x - fromPoint.x);
     }
 
-    // --- Rope entry edges: ground/rope region → rope region ---
+    // --- Rope entry edges: ground/rope region â†’ rope region ---
 
     private static void addRopeEntryEdges(BotNavigationGraph.Region ropeRegion,
                                           List<BotNavigationGraph.Region> groundRegions,
@@ -2280,7 +2280,7 @@ final class BotNavigationGraphProvider {
         }
     }
 
-    // --- Rope exit edges: rope region → ground/rope region ---
+    // --- Rope exit edges: rope region â†’ ground/rope region ---
 
     private static void addRopeExitEdges(BotNavigationGraph.Region ropeRegion,
                                          List<BotNavigationGraph.Region> ropeRegions,
@@ -2304,10 +2304,10 @@ final class BotNavigationGraphProvider {
         addTopStepOffEdge(ropeRegion, rope, map, regionsById, regionIdByFootholdId, outgoing, edgeKeys);
 
         // Jump-off / step-off to ground at various heights along the rope. The launch axis here is the
-        // climb height Y (the rope analogue of a ground jump's launch X). Probing every anchorY × 3 dirs
-        // and emitting one edge each produced ~anchorYs×3 near-duplicate CLIMB edges all landing in the
+        // climb height Y (the rope analogue of a ground jump's launch X). Probing every anchorY Ã— 3 dirs
+        // and emitting one edge each produced ~anchorYsÃ—3 near-duplicate CLIMB edges all landing in the
         // same region. Instead, for each (anchorY, stepX) expand the contiguous Y-window that lands in the
-        // SAME region and emit ONE edge carrying [minY, maxY] — identical to how JUMP edges carry an
+        // SAME region and emit ONE edge carrying [minY, maxY] â€” identical to how JUMP edges carry an
         // X-window. Adjacent anchorYs collapse to the same window via the edge-key dedup. Execution then
         // climbs to any height inside the window (BotNavigationManager.selectClimbWaypoint), not a fixed Y.
         int loY = BotPhysicsEngine.firstClimbableY(rope);
@@ -2403,7 +2403,7 @@ final class BotNavigationGraphProvider {
     }
 
     /**
-     * Contiguous-window boundary search on the rope climb-height axis — the Y twin of
+     * Contiguous-window boundary search on the rope climb-height axis â€” the Y twin of
      * {@link #findJumpBoundary}. From {@code startY} it doubles outward then binary-searches toward
      * {@code searchUp} (smaller Y = up the rope, bounded by {@code loY}) / down ({@code hiY}) for the
      * last height where {@code validY} still holds.
@@ -2675,7 +2675,7 @@ final class BotNavigationGraphProvider {
         // can sit in the middle of a wide region with no naturally-derived feature X. Without
         // dense interior sampling, findJumpBoundary has no seed and the edge is missed entirely.
         // Spacing matches walkStep so a launch window as narrow as a single pre-launch tick
-        // (≈walkStep px) is guaranteed at least one seed sample. Repeated sims are absorbed by
+        // (â‰ˆwalkStep px) is guaranteed at least one seed sample. Repeated sims are absorbed by
         // jumpLandingCache.
         int walkStep = BotPhysicsEngine.walkStep(map, movementProfile);
         int interiorSpacing = Math.max(walkStep, 1);

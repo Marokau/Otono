@@ -10,7 +10,7 @@ import server.maps.Reactor;
 import java.awt.Point;
 import java.util.HashMap;
 
-/** OPQ-only reactor inputs: a normal weapon swing followed by the ordinary reactor packet. */
+/** Shared reactor inputs: a normal weapon swing followed by the ordinary reactor packet. */
 final class BotOpqReactorAttack {
     private BotOpqReactorAttack() {}
     static boolean hit(BotEntry entry,Character bot,Reactor reactor) {

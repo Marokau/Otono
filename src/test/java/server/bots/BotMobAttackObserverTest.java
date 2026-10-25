@@ -24,6 +24,55 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class BotMobAttackObserverTest {
+    @Test void ergothDeadlyAttackUsesNativeHpMpLossAndNotifiesBothPotionKeys() {
+        var bot=mock(Character.class); var client=mock(client.BotClient.class); var map=mock(MapleMap.class);
+        var mob=mock(Monster.class); var stats=mock(MonsterStats.class);
+        when(bot.getClient()).thenReturn(client); when(client.getPlayer()).thenReturn(bot);
+        when(bot.getMap()).thenReturn(map); when(bot.getPosition()).thenReturn(new Point());
+        when(bot.getJob()).thenReturn(Job.PRIEST);
+        var hp=new java.util.concurrent.atomic.AtomicInteger(1290);
+        var mp=new java.util.concurrent.atomic.AtomicInteger(6000);
+        when(bot.getHp()).thenAnswer(call->hp.get()); when(bot.getMp()).thenAnswer(call->mp.get());
+        when(bot.getBuffedValue(any(BuffStat.class))).thenReturn(null);
+        when(bot.getBuffedValue(BuffStat.MAGIC_GUARD)).thenReturn(80);
+        doAnswer(call->{hp.addAndGet(call.getArgument(0));mp.addAndGet(call.getArgument(1));return null;})
+                .when(bot).addMPHP(anyInt(),anyInt());
+        when(bot.getAutobanManager()).thenReturn(mock(AutobanManager.class));
+        when(mob.getId()).thenReturn(9300028); when(mob.getObjectId()).thenReturn(123);
+        when(mob.getStats()).thenReturn(stats); when(mob.getPosition()).thenReturn(new Point());
+        when(map.getMapObject(123)).thenReturn(mob);
+        try(var server=mockStatic(Server.class); var reaction=mockStatic(BotObservedHitReaction.class)) {
+            server.when(Server::getInstance).thenReturn(mock(Server.class));
+            BotMobAttackObserver.report(new BotEntry(bot,bot,null),bot,mob,1,1289);
+            assertEquals(1,hp.get()); assertEquals(1,mp.get());
+            verify(bot).triggerAutopotAfterStatLoss(-1289,-5999);
+        }
+    }
+
+    @Test void gpqHeadlessClientForwardsErgothAttackPackets() {
+        var bot=mock(Character.class);var client=spy(new client.BotClient(0,1));
+        doReturn(bot).when(client).getPlayer();doReturn(null).when(client).getCM();
+        var packet=mock(net.packet.Packet.class);
+        try(var gpq=mockStatic(BotGuildCompanions.class);var observer=mockStatic(BotMobAttackObserver.class)) {
+            gpq.when(()->BotGuildCompanions.inInstance(bot)).thenReturn(true);
+            client.sendPacket(packet);
+            observer.verify(()->BotMobAttackObserver.observe(bot,packet));
+        }
+    }
+
+    @Test void ergothAttacksKeepTheirRealDelayDeadlyFlagAndAllNineteenColumns() {
+        var fire=BotMobAttackObserver.attack(9300028,0);
+        var deadly=BotMobAttackObserver.attack(9300028,1);
+        var columns=BotMobAttackObserver.attack(9300028,2);
+        assertNotNull(fire);assertTrue(fire.magic());assertFalse(fire.deadly());assertEquals(900,fire.delay());
+        assertTrue(deadly.deadly());assertEquals(900,deadly.delay());
+        assertEquals(3,columns.type());assertEquals(19,columns.areaCount());assertEquals(2040,columns.delay());
+        var map=mock(MapleMap.class);var mob=mock(Monster.class);when(mob.getId()).thenReturn(9300028);
+        when(map.getPointBelow(any())).thenAnswer(inv->{Point p=inv.getArgument(0);return new Point(p.x,150);});
+        var cast=new BotMobAttackObserver.Cast(map,mob,columns,2,(1<<0)|(1<<18),new Point(0,0),0);
+        assertEquals(2,BotMobAttackObserver.areas(cast).size());
+    }
+
     @Test void poisonGolemRocksUseTheirOwnDamageDelayAndAllTwentyThreeColumns() {
         var attack=BotMobAttackObserver.attack(9300182,2);
         assertNotNull(attack);assertEquals(3,attack.type());assertEquals(290,attack.pad());

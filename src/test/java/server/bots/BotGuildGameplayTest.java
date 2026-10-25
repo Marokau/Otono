@@ -1,0 +1,30 @@
+package server.bots;
+import client.Character;import client.inventory.InventoryType;import org.junit.jupiter.api.Test;import server.maps.*;import java.awt.*;import static org.junit.jupiter.api.Assertions.*;import static org.mockito.Mockito.*;
+class BotGuildGameplayTest {
+ @Test void openedGpqGateAllowsNativeRevivalWhileOtherPqDeathsStillWait() throws Exception {
+  var b=mock(Character.class);var mate=mock(Character.class);var event=mock(scripting.event.EventInstanceManager.class);var map=mock(MapleMap.class);
+  when(b.getId()).thenReturn(1);when(mate.getId()).thenReturn(2);when(b.getMap()).thenReturn(map);when(b.getMapId()).thenReturn(990000900);when(mate.getMapId()).thenReturn(990000900);when(mate.getHp()).thenReturn(100);when(b.getEventInstance()).thenReturn(event);when(event.getPlayers()).thenReturn(java.util.List.of(b,mate));
+  var wait=BotManager.class.getDeclaredMethod("hasLiveEventMateInMap",Character.class);wait.setAccessible(true);
+  assertTrue((boolean)wait.invoke(null,b),"Before sacrifice, normal party death rules still apply");
+  when(event.getIntProperty("canRevive")).thenReturn(1);
+  assertFalse((boolean)wait.invoke(null,b),"The native GPQ flag permits the ordinary revive response");
+  when(b.getMapId()).thenReturn(922010800);when(mate.getMapId()).thenReturn(922010800);
+  assertTrue((boolean)wait.invoke(null,b),"Other PQs retain their existing death wait");
+ }
+
+ @Test void idleGpqPriestMayEvaluateOrdinaryHealButStillRespectsItsSkillCost(){
+  var b=mock(Character.class);var map=mock(MapleMap.class);var skill=mock(client.Skill.class);var fx=mock(server.StatEffect.class);var e=new BotEntry(b,b,null);
+  e.healSkillId=2301002;e.supportHealsEnabled=true;when(b.isAlive()).thenReturn(true);when(b.getMap()).thenReturn(map);when(b.getPosition()).thenReturn(new Point(0,0));when(b.getHp()).thenReturn(100);when(b.getCurrentMaxHp()).thenReturn(1000);when(b.getSkillLevel(skill)).thenReturn((byte)30);when(skill.getEffect(30)).thenReturn(fx);when(map.getAllMonsters()).thenReturn(java.util.List.of());
+  try(var guild=mockStatic(BotGuildCompanions.class);var skills=mockStatic(client.SkillFactory.class)){
+   guild.when(()->BotGuildCompanions.inInstance(b)).thenReturn(true);skills.when(()->client.SkillFactory.getSkill(2301002)).thenReturn(skill);
+   assertFalse(BotCombatManager.tickSupportHealing(e,b));verify(fx).canPaySkillCost(b);verify(fx,never()).applyTo(b);
+   clearInvocations(fx);guild.when(()->BotGuildCompanions.inInstance(b)).thenReturn(false);
+   assertFalse(BotCombatManager.tickSupportHealing(e,b));verifyNoInteractions(fx);
+  }
+ }
+
+ @Test void unreachableStandingLedgeCanStillBeCollectedByOrdinaryAirbornePickup(){var b=mock(Character.class);var map=mock(MapleMap.class);var item=mock(MapItem.class);var e=new BotEntry(b,b,null);var manager=mock(BotManager.class);when(b.getMap()).thenReturn(map);when(b.getPosition()).thenReturn(new Point(0,77));when(item.getPosition()).thenReturn(new Point(0,0));when(item.getItemId()).thenReturn(4001030);when(item.canBePickedBy(b)).thenReturn(true);when(map.getDroppedItems()).thenReturn(java.util.List.of(item));try(var physics=mockStatic(BotPhysicsEngine.class);var movement=mockStatic(BotMovementManager.class);var managers=mockStatic(BotManager.class);var hold=mockStatic(BotOpqRun.class)){managers.when(BotManager::getInstance).thenReturn(manager);physics.when(()->BotPhysicsEngine.calculateMaxJumpHeight(e.movementProfile)).thenReturn(77f);BotGuildRun.collect(e,b,x->x==4001030,true);movement.verify(()->BotMovementManager.initiateJump(e,b,0));verify(b,never()).pickupItem(item);when(b.getPosition()).thenReturn(new Point(0,24));e.inAir=true;BotGuildRun.collect(e,b,x->x==4001030,true);verify(b).pickupItem(item);}}
+ @Test void offeringWaitsForOrdinaryItemReactorConsumption(){var b=mock(Character.class);var r=mock(Reactor.class);var manager=mock(BotManager.class);var e=new BotEntry(b,b,null);var s=new BotGuildRun.State();when(b.getId()).thenReturn(42);when(b.getPosition()).thenReturn(new Point(0,0));when(b.getItemQuantity(4001037,false)).thenReturn(1);when(r.getArea()).thenReturn(new Rectangle(-20,-20,40,40));when(manager.issueDropItem(e,InventoryType.ETC,4001037,(short)1)).thenReturn(true);try(var m=mockStatic(BotManager.class);var h=mockStatic(BotOpqRun.class)){m.when(BotManager::getInstance).thenReturn(manager);assertTrue(BotGuildRun.drop(e,b,s,r,4001037,1,true));assertTrue(s.next.get(42)>System.currentTimeMillis()+5000);verify(manager).issueDropItem(e,InventoryType.ETC,4001037,(short)1);}}
+ @Test void groundedRockUsesItsSupportingFloorInsteadOfFloatingReactorHeuristic(){var b=mock(Character.class);var map=mock(MapleMap.class);var r=mock(Reactor.class);var e=new BotEntry(b,b,null);var floor=new Point(1000,10);when(b.getMap()).thenReturn(map);when(b.getPosition()).thenReturn(new Point(0,0));when(map.getAllReactors()).thenReturn(java.util.List.of(r));when(r.isActive()).thenReturn(true);when(r.getPosition()).thenReturn(new Point(1000,0));try(var physics=mockStatic(BotPhysicsEngine.class);var walk=mockStatic(BotZakumPqRun.class);var approach=mockStatic(BotOpqReactorApproach.class)){physics.when(()->BotPhysicsEngine.findGroundPoint(eq(map),any(Point.class))).thenReturn(floor);BotGuildActions.smash(e,b,x->true,true);walk.verify(()->BotZakumPqRun.walkTo(e,b,floor,true));approach.verifyNoInteractions();}}
+ @Test void dedicatedBossAndBonusLootAndPlacedItemsStayForTheirIntendedRole(){var b=mock(Character.class);var owner=mock(Character.class);var drop=mock(MapItem.class);var e=new BotEntry(b,owner,null);when(owner.getId()).thenReturn(8);when(drop.canBePickedBy(b)).thenReturn(true);try(var g=mockStatic(BotGuildCompanions.class)){g.when(()->BotGuildCompanions.inInstance(b)).thenReturn(true);g.when(()->BotGuildCompanions.belongsTo(b,8)).thenReturn(true);when(drop.getItemId()).thenReturn(4001024);assertFalse(BotLootEligibility.canBotLoot(e,b,drop));when(drop.getItemId()).thenReturn(1000001);when(b.getMapId()).thenReturn(990000900);assertFalse(BotLootEligibility.canBotLoot(e,b,drop));when(b.getMapId()).thenReturn(990001000);when(drop.isPlayerDrop()).thenReturn(true);assertFalse(BotLootEligibility.canBotLoot(e,b,drop));}}
+}

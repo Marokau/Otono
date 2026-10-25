@@ -51,6 +51,8 @@ class BotNavigationManagerTest {
         assertTrue(BotNavigationManager.botCanUseMovementSkill(bot));
         when(bot.getMapId()).thenReturn(930000500);
         assertTrue(BotNavigationManager.botCanUseMovementSkill(bot));
+        when(bot.getMapId()).thenReturn(990000440);
+        assertTrue(BotNavigationManager.botCanUseMovementSkill(bot));
         when(bot.getMp()).thenReturn(200);
         assertFalse(BotNavigationManager.botCanUseMovementSkill(bot));
         when(bot.getMp()).thenReturn(500);
@@ -454,8 +456,13 @@ class BotNavigationManagerTest {
                 new Point(100, 100), new Point(100, -50),
                 80, 200, 0, 0, 0, 0, 0, 100);
 
-        assertNull(BotNavigationManager.selectTeleportCooldownWaypoint(
+        assertEquals(new Point(100, 100), BotNavigationManager.selectTeleportCooldownWaypoint(
                 entry, new Point(100, 100), upTeleport));
+        assertEquals(new Point(79, 100), BotNavigationManager.selectTeleportCooldownWaypoint(
+                entry, new Point(79, 100), upTeleport), "Wait before approaching the narrow window");
+        entry.lastEdgeBlockReason = "tele-mp";
+        assertNull(BotNavigationManager.selectTeleportCooldownWaypoint(
+                entry, new Point(100, 100), upTeleport), "Only a cooldown creates this wait");
     }
 
     @Test

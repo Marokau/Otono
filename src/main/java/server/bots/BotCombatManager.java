@@ -82,7 +82,7 @@ class BotCombatManager {
     private static final long UNREACHABLE_GRAPH_COST = Long.MAX_VALUE / 4;
     private static final double MIN_EXPECTED_DAMAGE_PER_ATTACK = 1.0d;
 
-    // Skills that bots must never cast — stealth makes them untargetable by monsters,
+    // Skills that bots must never cast â€” stealth makes them untargetable by monsters,
     // breaking combat entirely.
     static final Set<Integer> BUFF_BLACKLIST = Set.of(
             Rogue.DARK_SIGHT,
@@ -217,7 +217,7 @@ class BotCombatManager {
         public long  AOE_REPOSITION_MAX_MS = 800L;
         // Step-closer-for-a-stronger-skill: the inverse of AoE reposition. When the in-range fire-now
         // plan is a weak long-reach skill (e.g. a Hermit firing Avenger from afar) but a stronger
-        // skill is just out of reach (shorter hitbox), walk in so the stronger skill lands — only when
+        // skill is just out of reach (shorter hitbox), walk in so the stronger skill lands â€” only when
         // it beats the fire-now plan's single-target DPS by this factor, and the step is bounded
         // (opportunity cost: time spent walking isn't firing). Reuses the AoE reposition anchor/timer.
         public boolean BETTER_REACH_REPOSITION_ENABLED = true;
@@ -226,12 +226,12 @@ class BotCombatManager {
         public int   GRIND_REGION_OCCUPANCY_PENALTY = 1200;
         public int   GRIND_REGION_OCCUPANCY_PENALTY_CAP = 3600;
 
-        // Grind doctrine (BotGrindDoctrine/BotGrindSpots): map-archetype positioning — bots claim
+        // Grind doctrine (BotGrindDoctrine/BotGrindSpots): map-archetype positioning â€” bots claim
         // and camp/patrol/stack-work spawn clusters instead of chasing the best-scored mob across
         // the whole map. Off = pre-doctrine behavior (everything roams).
         public boolean GRIND_DOCTRINE_ENABLED = true;
         // Class-aware engage feel: thief-line bots probabilistically jump-attack (and occasionally
-        // hop AWAY mid-engage, throwing backward — the classic mini-kite). Off = plant-and-swing.
+        // hop AWAY mid-engage, throwing backward â€” the classic mini-kite). Off = plant-and-swing.
         public boolean ENGAGE_STYLE_ENABLED = true;
         // Chance a thief engagement opens with a hop-attack, and of that hop going away-from-mob.
         public double ENGAGE_HOP_CHANCE = 0.68d;
@@ -291,7 +291,7 @@ class BotCombatManager {
 
     static Config cfg = new Config();
 
-    /** The live combat config instance — for {@link BotConfigReflect}-backed admin surfaces (web /api/settings). */
+    /** The live combat config instance â€” for {@link BotConfigReflect}-backed admin surfaces (web /api/settings). */
     public static Config config() { return cfg; }
 
     /** Admin/debug (!botcfg): "FIELD = value" for every public combat config field, sorted. */
@@ -312,7 +312,7 @@ class BotCombatManager {
     private static final int CLIENT_PROJECTILE_TOP = 50;
     private static final int CLIENT_PROJECTILE_BOTTOM = 50;
 
-    // Pierce-line projectiles do NOT use the generic ±50 px vertical band: the actual
+    // Pierce-line projectiles do NOT use the generic Â±50 px vertical band: the actual
     // client projectile sprite is much thinner (Iron Arrow) or much taller (Avenger)
     // and the launch height sits at ~30 px above the character's feet.
     //   yAbove = how far the projectile box extends above the bot's feet.
@@ -321,8 +321,8 @@ class BotCombatManager {
     // Values measured 2026-05-18 from monitored-packets-{ironarrow,avenger}-*.log
     // (Bowgurl / admin) by binary-searching the mob-Y vs. player-feet-Y delta at which
     // the client stopped including a mob in the per-attack mob list:
-    //   Iron Arrow: hit @ Δy=17, miss @ Δy=41  → reach ≈ 30 (~thin horizontal line)
-    //   Avenger:    hit @ Δy=56, miss @ Δy=65  → reach ≈ 60 (~±30 around launch line)
+    //   Iron Arrow: hit @ Î”y=17, miss @ Î”y=41  â†’ reach â‰ˆ 30 (~thin horizontal line)
+    //   Avenger:    hit @ Î”y=56, miss @ Î”y=65  â†’ reach â‰ˆ 60 (~Â±30 around launch line)
     private record ProjectileVerticalReach(int yAbove, int yBelow) { }
 
     private static final Map<Integer, ProjectileVerticalReach> PIERCE_LINE_PROJECTILE_REACH = Map.of(
@@ -445,7 +445,7 @@ class BotCombatManager {
      * terminal velocity is reached after only ~112px of fall, so velocity saturates
      * immediately while real-client damage keeps scaling with drop height.
      *
-     * No packet is broadcast below threshold — matches real-client behaviour for
+     * No packet is broadcast below threshold â€” matches real-client behaviour for
      * small jumps (no DAMAGE_PLAYER observed in monitored-packets logs).
      *
      * Broadcast direction is hardcoded to 0 because every captured real-client fall
@@ -463,19 +463,19 @@ class BotCombatManager {
     }
 
     /**
-     * Fall-damage curve — smooth single formula (no hard breakpoint):
+     * Fall-damage curve â€” smooth single formula (no hard breakpoint):
      *   dmg = SAT * (1 - exp(-k*u)) + tail*u,    where u = max(0, dist - threshold)
      * Saturating exponential models the steep knee; linear tail models the slow
      * deep-fall growth (damage keeps scaling past the knee in the real client).
      *
-     * Grid-search fit against real-client samples — all within ±1 dmg:
-     *   916 → 8, 1094 → 27 (a=26), 1132 → 27 (a=28), 1421 → 29, 3861 → 35.
+     * Grid-search fit against real-client samples â€” all within Â±1 dmg:
+     *   916 â†’ 8, 1094 â†’ 27 (a=26), 1132 â†’ 27 (a=28), 1421 â†’ 29, 3861 â†’ 35.
      *
      * O(1): one exp, two multiplies, one add, one round.
      */
     static final float FALL_DIST_THRESHOLD_PX = 890.0f;   // below: 0 dmg, no packet
     static final float FALL_DMG_SAT           = 28.0f;    // asymptote of the knee component
-    static final float FALL_KNEE_SHARPNESS    = 0.013f;   // 1/px — larger = sharper knee
+    static final float FALL_KNEE_SHARPNESS    = 0.013f;   // 1/px â€” larger = sharper knee
     static final float FALL_DMG_PER_PX_TAIL   = 0.0024f;  // linear tail slope (dmg/px)
 
     static int fallDamageFromDistance(float distancePx) {
@@ -663,7 +663,7 @@ class BotCombatManager {
             }
 
             if (isSummonSkill(fx)) {
-                // Own bucket, not rebuffable — see BotEntry.summonSkillIds.
+                // Own bucket, not rebuffable â€” see BotEntry.summonSkillIds.
                 entry.summonSkillIds.add(skill.getId());
                 continue;
             }
@@ -708,6 +708,24 @@ class BotCombatManager {
             noteSkillBuffDecision(entry, "skill buffs disabled");
             return;
         }
+        // Dispel invalidates active protection independently of ordinary rebuff deadlines.
+        Skill guildProtection = BotGuildBossSupport.criticalSkill(bot);
+        if (guildProtection != null && !entry.inAir && !entry.climbing
+                && !bot.skillIsCooling(guildProtection.getId())) {
+            castSupportSkill(entry, bot, guildProtection,
+                    guildProtection.getEffect(bot.getSkillLevel(guildProtection)), System.currentTimeMillis());
+            return;
+        }
+        if (BotGuildRun.needsDarkSight(bot)) {
+            // Reserve the action window for Dark Sight and renew before it expires.
+            Skill skill = SkillFactory.getSkill(Rogue.DARK_SIGHT);
+            int level = bot.getSkillLevel(skill);
+            Long started = bot.getBuffedStarttime(BuffStat.DARKSIGHT);
+            if (level > 0 && !entry.inAir && !entry.climbing
+                    && (started == null || started + skill.getEffect(level).getDuration() - System.currentTimeMillis() < 4000))
+                castSupportSkill(entry, bot, skill, skill.getEffect(level), System.currentTimeMillis());
+            return;
+        }
         if (BotLpqVaults.needsDarkSight(bot) && bot.getBuffedValue(BuffStat.DARKSIGHT) == null
                 && !entry.inAir && !entry.climbing) {
             Skill skill = SkillFactory.getSkill(Rogue.DARK_SIGHT);
@@ -715,7 +733,7 @@ class BotCombatManager {
             if (level > 0) castSupportSkill(entry, bot, skill, skill.getEffect(level), System.currentTimeMillis());
             return;
         }
-        if (!entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot)) {
+        if (!entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) {
             noteSkillBuffDecision(entry, "idle (not following or grinding)");
             return;
         }
@@ -725,7 +743,7 @@ class BotCombatManager {
         }
 
         // Deadline-driven (re)buff evaluation. Every cast is gated by a per-skill nextBuffAt /
-        // nextSupportBuffAt timer, so between the nearest of those there is nothing to do — sleep the whole
+        // nextSupportBuffAt timer, so between the nearest of those there is nothing to do â€” sleep the whole
         // scan (incl. the O(monsters) liveness check that was ~33% of all bot CPU when run per tick) until
         // then. Casting a buff drops the deadline back to the poll floor so the rest are picked up promptly.
         long now = System.currentTimeMillis();
@@ -733,7 +751,7 @@ class BotCombatManager {
         entry.lastSkillBuffScanMs = now;
         // Beholder's healing/buff schedules are server-owned. Unlike attacking summons,
         // it needs no headless SUMMON_ATTACK simulation after the ordinary cast.
-        if (BotZakumBattle.inInstance(bot) && BotSummonCombat.canCast(entry, bot, now)) {
+        if ((BotZakumBattle.inInstance(bot) || BotMvpqRun.inInstance(bot)) && BotSummonCombat.canCast(entry, bot, now)) {
             for (int id : entry.summonSkillIds) {
                 if (id != DarkKnight.BEHOLDER && !BotSummonCombat.supported(id)) continue;
                 if (bot.hasActiveBuff(id) || now < entry.nextBuffAt.getOrDefault(id, 0L) || bot.skillIsCooling(id)) continue;
@@ -752,7 +770,7 @@ class BotCombatManager {
         // which at worst lets a due, deadline-gated rebuff fire a beat early (harmless while grinding).
         // Orbis puzzle traversal needs normal party support (notably Haste) even
         // on an otherwise empty field. Keep ordinary population idle-map behavior.
-        if (bot.getMap().getSpawnedMonstersOnMap() == 0 && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot)) return;
+        if (bot.getMap().getSpawnedMonstersOnMap() == 0 && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) return;
 
         if (trySupportBuff(entry, bot, now)) {
             return;
@@ -830,7 +848,7 @@ class BotCombatManager {
     }
 
     /**
-     * Gate for buffs that consume a rock per cast (Shadow Partner etc. — {@link StatEffect#getItemConNo()} &gt; 0,
+     * Gate for buffs that consume a rock per cast (Shadow Partner etc. â€” {@link StatEffect#getItemConNo()} &gt; 0,
      * rock id {@link StatEffect#getItemCon()}). Skip the cast unless (a) the bot actually holds the rock, and
      * (b) the current fight is long enough to be worth a charge. Non-rock buffs are never gated.
      */
@@ -847,7 +865,7 @@ class BotCombatManager {
         Monster target = entry.grindTarget;
         if (target == null || !target.isAlive()) {
             // No committed target: defer the rock buff rather than pay an O(all-map-objects)
-            // getAllMonsters scan under objectRLock here — this was the last such scan left in the
+            // getAllMonsters scan under objectRLock here â€” this was the last such scan left in the
             // tickBuffs hot path after the getSpawnedMonstersOnMap fix, and a candidate for the
             // multi-second combat-buffs tail-stalls. A rock buff (Shadow Partner etc.) with nothing
             // committed to fight isn't worth a charge; the bot rebuffs on the next scan once it
@@ -912,7 +930,7 @@ class BotCombatManager {
     /**
      * Healing is the cleric bot's top priority: runs before any attack decision (see BotManager tick)
      * and casts whenever the bot itself OR any nearby party member is below
-     * {@link Config#SUPPORT_HEAL_TARGET_RATIO}. There is no decision-side cooldown — the only
+     * {@link Config#SUPPORT_HEAL_TARGET_RATIO}. There is no decision-side cooldown â€” the only
      * throttle is {@code entry.attackCooldownMs}, which we set from the skill's animation timing so
      * consecutive casts match what a legit client would send (~600ms between Heal packets per the
      * captured monitored-packets-cleric-heal-only.log reference).
@@ -924,7 +942,7 @@ class BotCombatManager {
         if (bot.hasDisease(client.Disease.STUN) || bot.hasDisease(client.Disease.SEAL)) return false;
         if (entry.attackCooldownMs > 0 || (entry.moveWindowMs > 0 && !entry.inAir)) return false;
         if (!entry.supportHealsEnabled) return false;
-        if (!entry.following && !entry.grinding && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot)) return false;
+        if (!entry.following && !entry.grinding && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) return false;
         if (entry.healSkillId == 0 || bot.skillIsCooling(entry.healSkillId)) return false;
 
         Skill skill = SkillFactory.getSkill(entry.healSkillId);
@@ -974,14 +992,14 @@ class BotCombatManager {
         }
 
         // Always send the attack/cast packet so the animation plays even when there are no undead
-        // to hit — the packet carries an empty targets map in that case, which is what a real client
+        // to hit â€” the packet carries an empty targets map in that case, which is what a real client
         // does when a player presses Heal with no mob in range.
         sendHealAttack(entry.healSkillId, lvl, bot, undeadTargets, fallbackAttackData, skillTiming);
         markAlerted(entry);
         entry.moveWindowMs = Math.max(entry.moveWindowMs, cfg.HEAL_MOVE_WINDOW_MS);
         if (!jumpHealing) {
-            // Stop walk-in-place: broadcast STAND→ALERT immediately on the heal tick.
-            // Skipped on jump-heal — initiateJump already broadcast the airborne stance and
+            // Stop walk-in-place: broadcast STANDâ†’ALERT immediately on the heal tick.
+            // Skipped on jump-heal â€” initiateJump already broadcast the airborne stance and
             // zeroing moveDir here would cancel the diagonal air-steering toward the leader.
             entry.moveDir = 0;
             BotMovementManager.broadcastMovement(entry);
@@ -1063,7 +1081,7 @@ class BotCombatManager {
         return findGrindTarget(null, bot);
     }
 
-    /** Returns the most convenient reachable target (deterministic — closest/best score wins). */
+    /** Returns the most convenient reachable target (deterministic â€” closest/best score wins). */
     static Monster findGrindTarget(BotEntry entry, Character bot) {
         long startedAt = BotPerformanceMonitor.start();
         try {
@@ -1128,7 +1146,7 @@ class BotCombatManager {
 
             // 1-hop expansion: only inter-region edges count as a hop. Self-loop edges
             // (intra-region portals where fromRegionId == toRegionId) are free traversals
-            // within the patrol region itself — A* uses them to shortcut long walks but
+            // within the patrol region itself â€” A* uses them to shortcut long walks but
             // they don't expose new regions, so skip them here to keep intent explicit.
             Set<Integer> adjacentIds = graph.getMutualAdjacentRegionIds(patrolId);
 
@@ -1248,7 +1266,7 @@ class BotCombatManager {
     // Cadenced wrapper over planAttack: replan on AI ticks (or whenever the target changed / no cached
     // plan exists), and on the interleaved physics tick reuse the last plan. The plan's hitbox is anchored
     // at plan-time positions, but reach/spacing tolerate one physics tick (~50ms, a few px of drift) of
-    // staleness — far inside the spacing hysteresis band — and the attack itself fires at most one tick
+    // staleness â€” far inside the spacing hysteresis band â€” and the attack itself fires at most one tick
     // late. COMBAT_PLAN_EVERY_TICK=true disables the reuse and restores per-tick planning.
     static AttackPlan planAttackCadenced(BotEntry entry, Character bot, Monster target, boolean runAiTick) {
         if (target == null) {
@@ -1271,7 +1289,7 @@ class BotCombatManager {
 
     /**
      * Best expected per-attack damage the bot would deal to {@code mob} using one of its attack skills,
-     * computed with the SAME damage model the live planner uses ({@link CombatFormulaProvider}) — so
+     * computed with the SAME damage model the live planner uses ({@link CombatFormulaProvider}) â€” so
      * magic vs physical, skill %, line count and the mob's defense are all handled identically. Spatial
      * targeting (hitbox/facing/reach) is intentionally ignored; this is the bot's raw damage capability
      * against that mob, for farming-cost / valuation. Returns 0 when the bot has no usable attack skill
@@ -1311,7 +1329,7 @@ class BotCombatManager {
     /**
      * Worth taking this en-route shot? True when the bot can finish {@code target} in
      * {@link Config#OPPORTUNITY_MAX_HITS_TO_KILL} expected hits or fewer. Uses the same
-     * hit-chance-folded expected damage as {@link #scoreAttackPlan}, against current HP — so a tanky
+     * hit-chance-folded expected damage as {@link #scoreAttackPlan}, against current HP â€” so a tanky
      * mob and a mob the bot keeps whiffing on are both rejected, and a near-dead mob still gets the tap.
      */
     static boolean isEnRouteAttackWorthwhile(BotEntry entry, Character bot, AttackPlan attackPlan, Monster target) {
@@ -1320,17 +1338,17 @@ class BotCombatManager {
         }
         int hp = target.getHp();
         if (hp <= 0) {
-            return true; // already dead/unknown HP — let the normal range/plan checks decide
+            return true; // already dead/unknown HP â€” let the normal range/plan checks decide
         }
         if (isTrivialAndNotWorthExp(entry, bot, target)) {
-            return false; // harmless + negligible exp — not worth interrupting travel for
+            return false; // harmless + negligible exp â€” not worth interrupting travel for
         }
         CombatFormulaProvider.DamageProfile profile = resolveAttackDamageProfile(
                 entry, bot, attackPlan.skillId, attackPlan.skillLevel, attackPlan.route, attackPlan.damageWeaponType);
         double expectedDamage = CombatFormulaProvider.getInstance().estimateExpectedDamage(
                 bot, target, attackPlan.numDamage, attackPlan.skillId, profile);
         if (expectedDamage <= 0.0d) {
-            return false; // can't meaningfully hurt it (no usable attack / hopeless accuracy) — walk on
+            return false; // can't meaningfully hurt it (no usable attack / hopeless accuracy) â€” walk on
         }
         return hp / expectedDamage <= cfg.OPPORTUNITY_MAX_HITS_TO_KILL;
     }
@@ -1347,7 +1365,7 @@ class BotCombatManager {
         double expectedTouch = server.bots.combat.BotDefenseDataProvider.getInstance()
                 .expectedTouchHpLossFraction(bot, target) * bot.getCurrentMaxHp();
         if (expectedTouch > cfg.OPPORTUNITY_TRIVIAL_TOUCH_DAMAGE) {
-            return false; // can actually hurt the bot — worth clearing regardless of exp
+            return false; // can actually hurt the bot â€” worth clearing regardless of exp
         }
         var stats = target.getStats();
         if (stats == null) {
@@ -1454,8 +1472,8 @@ class BotCombatManager {
                              boolean minimumKillsFullHpTargets) {
     }
 
-    // Close-range attacks with a ranged weapon equipped — bow/crossbow swing (including Power
-    // Knockback, forced CLOSE), claw punch, gun bash — are "degenerate" on the client and use
+    // Close-range attacks with a ranged weapon equipped â€” bow/crossbow swing (including Power
+    // Knockback, forced CLOSE), claw punch, gun bash â€” are "degenerate" on the client and use
     // the weak mismatched-weapon formula: fixed 10% mastery, no crit passives. Everything else
     // keeps the normal weapon/skill formula.
     static CombatFormulaProvider.DamageProfile resolveAttackDamageProfile(
@@ -1474,7 +1492,7 @@ class BotCombatManager {
     // Entry-cached variant of resolveAttackDamageProfile: the profile is a pure function of the bot's
     // stats (watk/magic/str/dex/luk) and the skill, so it repeats identically across the ~1.75 plans/tick
     // an engaged bot runs. We key the cache by (skillId,skillLevel,route,weapon) and gate the whole map on
-    // a cheap stat fingerprint — any equip/level/buff change runs recalcLocalStats, the fingerprint moves,
+    // a cheap stat fingerprint â€” any equip/level/buff change runs recalcLocalStats, the fingerprint moves,
     // and the map is flushed. This is the SSOT for cache validity: staleness is derived from the live stat
     // values rather than hooked at each mutation site.
     static CombatFormulaProvider.DamageProfile resolveAttackDamageProfile(
@@ -1634,7 +1652,7 @@ class BotCombatManager {
         // Cross-thread kill guard. Callers validate isAlive() before planning, but another player/bot can
         // kill the target between selection and this send gate (the plan can also be a cadenced reuse from a
         // tick ago). Firing at a corpse rolls damage, burns MP/ammo + cooldown, and broadcasts a hit that
-        // lands on nothing — the "bot shoots but hits no mob" symptom. This is the last race-free read before
+        // lands on nothing â€” the "bot shoots but hits no mob" symptom. This is the last race-free read before
         // we commit, so re-check here and skip; the next tick replans against live mobs.
         if (primary != null && (!primary.isAlive() || (!BotCarnivalRun.canAttack(bot, primary) || !BotEllinRun.canAttack(bot, primary)))) {
             recordAttackExec(entry, attackPlan, primary, "blocked:dead-target", 0,
@@ -1845,7 +1863,7 @@ class BotCombatManager {
         // Boss crews carry a finite potion load and cannot shop inside the altar.
         // Repeated percentage-HP attacks (Dragon Roar) otherwise consume the whole supply.
         if (BotZakumBattle.inInstance(bot) && effect.getHpRate() < 0) return null;
-        // Combo finishers (Panic/Coma) are client-gated on holding at least one combo orb — a bot
+        // Combo finishers (Panic/Coma) are client-gated on holding at least one combo orb â€” a bot
         // must play the same rule. COMBO buff value = orbs + 1, so < 2 means no orb to consume.
         if (GameConstants.isFinisherSkill(skillId)) {
             Integer combo = bot.getBuffedValue(BuffStat.COMBO);
@@ -2010,7 +2028,7 @@ class BotCombatManager {
         // A true melee weapon carries an afterimage swing box (per-weapon, per-action). Use it and
         // ignore the skill's WZ `range`, which the v83 client does not apply to these melee swings
         // (e.g. Slash Blast reaches the same as the weapon's basic swing, not its 150 px `range`).
-        // Weapons with no swing box — bows/crossbows casting Power Knockback as a melee hit — fall
+        // Weapons with no swing box â€” bows/crossbows casting Power Knockback as a melee hit â€” fall
         // through and keep `range` (e.g. 130 px) as their close reach.
         Rectangle weaponBox = BotAttackExecutionProvider.closeRangeWeaponActionHitBox(bot, action, facingLeft);
         if (weaponBox != null) {
@@ -2047,9 +2065,9 @@ class BotCombatManager {
     }
 
     // Vertical extents are signed offsets from the character feet (origin.y):
-    //   yAboveOrigin >  0 → box top is yAboveOrigin px above feet.
-    //   yBelowOrigin >  0 → box bottom is yBelowOrigin px below feet.
-    //   yBelowOrigin <  0 → box bottom is |yBelowOrigin| px above feet (used for thin
+    //   yAboveOrigin >  0 â†’ box top is yAboveOrigin px above feet.
+    //   yBelowOrigin >  0 â†’ box bottom is yBelowOrigin px below feet.
+    //   yBelowOrigin <  0 â†’ box bottom is |yBelowOrigin| px above feet (used for thin
     //                       pierce-line projectiles fired from mid-body).
     // Empirically (see kb-pierce-line-projectile-vertical) the projectile launches from
     // approximately player.Y - 30 (mid-body) and its vertical reach is the projectile
@@ -2151,7 +2169,7 @@ class BotCombatManager {
     /**
      * True when {@code targetPos} is within the bot's basic-attack VERTICAL reach of {@code botPos}
      * (ignoring X): up to {@code ATTACK_RANGE_Y} above and {@code ATTACK_DOWN_MAX} below. SSOT for the
-     * vertical half of {@link #isBasicAttackInRange}; also the LOD1 motion-plan Y-band gate — a same-Y
+     * vertical half of {@link #isBasicAttackInRange}; also the LOD1 motion-plan Y-band gate â€” a same-Y
      * glide keeps combat fidelity because the frozen Y still lands the attack, while a target beyond
      * this band needs a real level change (fall through to physics).
      */
@@ -2162,7 +2180,7 @@ class BotCombatManager {
 
     /**
      * Returns the number of damage lines a skill fires per target.
-     * Uses the larger of attackCount and bulletCount from skill data —
+     * Uses the larger of attackCount and bulletCount from skill data â€”
      * claw skills like Lucky Seven store their projectile count in bulletCount.
      */
     static int effectiveHitCount(StatEffect effect) {
@@ -2175,7 +2193,7 @@ class BotCombatManager {
     // damage. The server validates this in AbstractDealDamageHandler (`maxattack * 2`
     // autoban headroom) and RangedAttackHandler (`bulletConsume * 2`). Bots inherit the
     // multiplier automatically once the buff lands on them (future admin command).
-    // Melee and magic routes are left untouched here — Shadow Partner's melee/magic
+    // Melee and magic routes are left untouched here â€” Shadow Partner's melee/magic
     // doubling for thief skills (e.g. Triple Throw is ranged-claw, so it covers itself)
     // can be enabled per-skill later if needed.
     private static int shadowPartnerHitMultiplier(Character bot, AttackRoute route) {
@@ -2186,7 +2204,7 @@ class BotCombatManager {
     }
 
     /**
-     * True iff the AoE skill's expected total damage (damage% × hits × targets) beats
+     * True iff the AoE skill's expected total damage (damage% Ã— hits Ã— targets) beats
      * the bot's best single-target option (best of configured attack skill or basic 100%).
      * Used to gate AoE selection when only a small cluster is in range.
      */
@@ -2194,7 +2212,7 @@ class BotCombatManager {
                                                   int aoeAttackCount, int targetCount) {
         int aoeDamage = Math.max(0, aoeEffect.getDamage());
         long aoeScore = (long) aoeDamage * Math.max(1, aoeAttackCount) * Math.max(1, targetCount);
-        long singleScore = 100L; // basic attack: 100% damage × 1 line
+        long singleScore = 100L; // basic attack: 100% damage Ã— 1 line
         if (entry.attackSkillId != 0) {
             Skill skill = SkillFactory.getSkill(entry.attackSkillId);
             int level = skill == null ? 0 : bot.getSkillLevel(skill);
@@ -2343,7 +2361,7 @@ class BotCombatManager {
         }
 
         // Route is gated to RANGED/MAGIC above, so the close-range (action-gated) path is never
-        // taken here — action is irrelevant for the projectile box.
+        // taken here â€” action is irrelevant for the projectile box.
         Rectangle hitBox = calculateSkillHitBox(effect, bot, target, route, entry.attackSkillId, null);
         if (hitBox == null || !doesHitBoxIntersectMonster(hitBox, target)) {
             return false;
@@ -2526,10 +2544,10 @@ class BotCombatManager {
     }
 
     // Touch-danger penalty (self-preservation, combat-side). ADDED to localScore (raise = worse,
-    // lower wins) — mirrors how aoeClusterBonus / questTargetBonus are SUBTRACTED, composing cleanly
+    // lower wins) â€” mirrors how aoeClusterBonus / questTargetBonus are SUBTRACTED, composing cleanly
     // with them. Only a *fragile* bot pays it, and only on a touch-dangerous mob, so a geared bot's
     // selection is unchanged. Kept SOFT (a single foothold-sized bump, not a hard skip) so a fragile
-    // bot still picks the least-bad mob when everything nearby is dangerous — the travel layer and
+    // bot still picks the least-bad mob when everything nearby is dangerous â€” the travel layer and
     // death-loop breaker are the backstops against being stranded somewhere lethal.
     static long touchDangerPenalty(boolean fragile, Character bot, Monster target) {
         if (!fragile || target == null || bot == null || !cfg.PROACTIVE_RETREAT_ENABLED) {
@@ -2556,7 +2574,7 @@ class BotCombatManager {
     }
 
     // Low-damage targeting penalty: de-prioritize mobs the bot can HIT but barely dents (high WDEF
-    // and/or deep level gap — a lv70 chipping 1-digit lines into a lv83 Ghost Pirate's 30k HP while
+    // and/or deep level gap â€” a lv70 chipping 1-digit lines into a lv83 Ghost Pirate's 30k HP while
     // in-band mobs stand nearby). Complements lowAccuracyPenalty, which only sees miss chance: a
     // reliably-hit-for-nothing mob previously scored identically to a well-matched one. Soft and
     // proportional (still fights when nothing better is in reach). Shots-to-kill comes from the
@@ -2603,7 +2621,7 @@ class BotCombatManager {
 
     /**
      * Proactive-retreat verdict (self-preservation, combat-side): disengage a touch-dangerous mob
-     * while HP is still HEALTHY — earlier and danger-driven, distinct from the reactive low-HP
+     * while HP is still HEALTHY â€” earlier and danger-driven, distinct from the reactive low-HP
      * potion/heal path (HP &lt; AUTOPOT_HP_THRESH). When HP has already dropped to/below the reactive
      * threshold we defer to that path (heal, don't add a competing retreat). The caller wires this
      * into the existing retreat/re-spacing machinery; this only decides whether to retreat.
@@ -2616,7 +2634,7 @@ class BotCombatManager {
         if (bot.getHp() < bot.getMaxHp() * BotManager.cfg.AUTOPOT_HP_THRESH) {
             return false;
         }
-        // Only a fragile bot (small HP pool / out of pots) flees — a stocked/tanky bot trades hits and
+        // Only a fragile bot (small HP pool / out of pots) flees â€” a stocked/tanky bot trades hits and
         // grinds. Matches the targeting-penalty gate, and stops well-supplied bots fleeing normal mobs.
         if (!isFragile(bot)) {
             return false;
@@ -2625,7 +2643,7 @@ class BotCombatManager {
     }
 
     /** A bot is fragile (and should weigh touch danger in targeting) when its HP pool is small or it
-     *  is out of HP potions — i.e. it can't trade hits. Geared/stocked bots ignore the penalty. */
+     *  is out of HP potions â€” i.e. it can't trade hits. Geared/stocked bots ignore the penalty. */
     private static boolean isFragile(Character bot) {
         if (bot.getMaxHp() <= cfg.TOUCH_FRAGILE_MAXHP) {
             return true;
@@ -2683,7 +2701,7 @@ class BotCombatManager {
     }
 
     // AoE positioning: target selection (aoeClusterBonus) steers the bot toward a cluster, but the
-    // fire site still throws the single-target skill the instant one mob is in range — the AoE box
+    // fire site still throws the single-target skill the instant one mob is in range â€” the AoE box
     // at the cluster *edge* catches only that mob, so it ties the denominator and loses on per-hit
     // damage. This returns a sweet-spot Point (the cluster centroid) to walk to when an AoE thrown
     // from there would beat the fire-now plan's DPS by cfg.AOE_REPOSITION_DPS_FACTOR, else null
@@ -2693,7 +2711,7 @@ class BotCombatManager {
                 || entry.aoeSkillId == 0 || entry.aoeSkillMobs <= 1) {
             return null;
         }
-        // Only when the chosen plan is single-target with room to hit more — skip when the AoE is
+        // Only when the chosen plan is single-target with room to hit more â€” skip when the AoE is
         // already the pick or the in-range cluster already maxes the skill's mobCount.
         if (fireNowBest == null
                 || fireNowBest.skillId == entry.aoeSkillId
@@ -2718,7 +2736,7 @@ class BotCombatManager {
         int centroidX = (int) (sumX / cluster.size());
         // Rebuild the AoE candidate at the current position (the plan planAttack discards) so we know
         // the actual hitbox shape. The box extends *forward* from the bot (it does not straddle the
-        // anchor), so to cover the cluster we shift the box CENTER onto the centroid — not the bot
+        // anchor), so to cover the cluster we shift the box CENTER onto the centroid â€” not the bot
         // onto the centroid, which would push a forward box past the mobs and catch none. The bot
         // moves by the same shift, bounded by the chase distance.
         AttackPlan aoeNow = planSkillAttack(entry, bot, primaryTarget, entry.aoeSkillId);
@@ -2730,7 +2748,7 @@ class BotCombatManager {
             shift = Integer.signum(shift) * cfg.AOE_REPOSITION_MAX_DISTANCE_X;
         }
         if (Math.abs(shift) <= cfg.AOE_REPOSITION_ARRIVAL_X) {
-            return null; // box already covers the cluster — let the normal flow pick the AoE
+            return null; // box already covers the cluster â€” let the normal flow pick the AoE
         }
         Rectangle shifted = new Rectangle(aoeNow.hitBox);
         shifted.translate(shift, 0);
@@ -2742,7 +2760,7 @@ class BotCombatManager {
         if (sweetTargets.size() <= fireNowBest.targets.size()) {
             return null; // repositioning wouldn't actually catch more mobs
         }
-        // Geometry is promising — now pay for scoring. scoreAttackPlan is position-independent
+        // Geometry is promising â€” now pay for scoring. scoreAttackPlan is position-independent
         // (target HP + damage profile), so the translated plan scores validly.
         PlanScore fireNowScore = scoreAttackPlan(entry, bot, fireNowBest);
         // Preserve kill priority: if the fire-now plan already one-shots a full-HP target, just fire.
@@ -2769,7 +2787,7 @@ class BotCombatManager {
     /**
      * Inverse of {@link #aoeRepositionTarget}: when the in-range fire-now plan is a weak long-reach
      * skill but a STRONGER skill is just out of reach (shorter hitbox), return a step-closer Point so
-     * the stronger skill lands instead. Generic — fixes any "fires the weaker far-reach skill rather
+     * the stronger skill lands instead. Generic â€” fixes any "fires the weaker far-reach skill rather
      * than stepping in for the stronger one" case (e.g. a Hermit defaulting to Avenger). Gated on the
      * stronger skill beating the fire-now single-target DPS by {@link Config#BETTER_REACH_REPOSITION_DPS_FACTOR}
      * and a bounded step (the walk time is the opportunity cost). Returns null when nothing closer wins.
@@ -2785,7 +2803,7 @@ class BotCombatManager {
             return null;
         }
         PlanScore fireNowScore = scoreAttackPlan(entry, bot, fireNowBest);
-        // Kill priority: if the fire-now plan already one-shots a full-HP target, don't walk — fire.
+        // Kill priority: if the fire-now plan already one-shots a full-HP target, don't walk â€” fire.
         if (fireNowScore.minimumKillsFullHpTargets || fireNowScore.rawDps <= 0) {
             return null;
         }
@@ -2961,8 +2979,8 @@ class BotCombatManager {
 
     /**
      * Direction (signed dx) for a planned engage hop: toward the mob, or with
-     * {@code ENGAGE_KITE_HOP_CHANCE} AWAY from it (throwing backward at the pursuer — the classic
-     * thief mini-kite) — but only when the away landing stays on same-level ground. Toward hops
+     * {@code ENGAGE_KITE_HOP_CHANCE} AWAY from it (throwing backward at the pursuer â€” the classic
+     * thief mini-kite) â€” but only when the away landing stays on same-level ground. Toward hops
      * need no land check (worst case they land on the mob's platform).
      */
     static int engageHopDx(Character bot, Point botPos, Point targetPos) {
@@ -3131,7 +3149,7 @@ class BotCombatManager {
     // Strike-point-anchored skills (e.g. Arrow Bomb) center their bbox on the target, so
     // doesHitBoxIntersectMonster(hitBox, target) is trivially true and does not gate reach.
     // Use the bot's basic weapon rectangle as a separate reach check. MAGIC route is left
-    // ungated for now — untested.
+    // ungated for now â€” untested.
     private static boolean isPrimaryReachableByBasicWeapon(Character bot, Monster target, AttackRoute route) {
         if (bot == null || target == null || bot.getPosition() == null || target.getPosition() == null) {
             return false;
@@ -3225,7 +3243,7 @@ class BotCombatManager {
         return closest;
     }
 
-    /** A living monster the bot may attack and be hit by — alive and not a friendly (escort/PQ) mob. */
+    /** A living monster the bot may attack and be hit by â€” alive and not a friendly (escort/PQ) mob. */
     // Thanks to ReinderKas for finding and implementing the friendly-mob
     // interaction (escort/PQ mobs should not be attacked or deal contact damage).
     private static boolean isHostileLivingMonster(Monster monster) {
@@ -3300,7 +3318,7 @@ class BotCombatManager {
     }
 
     // SkillFactory.getSkillName walks WZ String.img XML on every call, and the buff tick labels its
-    // decision every pass — memo the immutable name so bots don't re-parse XML per tick (profiler hot spot).
+    // decision every pass â€” memo the immutable name so bots don't re-parse XML per tick (profiler hot spot).
     private static final ConcurrentHashMap<Integer, String> SKILL_LABELS = new ConcurrentHashMap<>();
 
     private static String skillLabel(int skillId) {
@@ -3364,7 +3382,7 @@ class BotCombatManager {
     /**
      * Beginner Recovery as a top-priority, pot-saving self-heal: cast proactively whenever the bot is
      * below full HP so the slow MP->HP regen runs in the background, in OR out of combat. It does not
-     * replace potions — the client autopot still fires at its HP threshold (Recovery is too slow to
+     * replace potions â€” the client autopot still fires at its HP threshold (Recovery is too slow to
      * hold the line alone), this just bleeds the gap with MP the low-level bot isn't otherwise using.
      * Gated to {@code RECOVERY_MAXHP_CAP}: above that HP pool the cast time isn't worth it. Reuses the
      * {@link #castSupportSkill} cast SSOT (MP cost, visible SPECIAL_MOVE packet, animation lock).
@@ -3693,7 +3711,7 @@ class BotCombatManager {
      * applyTo() would never include them, so their HP never recovers and the decision fires again.
      *
      * <p>Falls back to the legacy SUPPORT_RANGE box if the skill has no WZ bounding box, which is
-     * defensive — Cleric.HEAL always has lt/rb, but other heal-like skills added later might not.
+     * defensive â€” Cleric.HEAL always has lt/rb, but other heal-like skills added later might not.
      */
     private static boolean hasPartyMemberInBoundsNeedingHeal(Character bot, Rectangle healBounds) {
         Point botPos = bot.getPosition();
@@ -3770,9 +3788,9 @@ class BotCombatManager {
     // attack skill we know of in v83; combined with isOverTime() this rejects utility skills
     // (Teleport, Magic Guard, Haste) that would otherwise pass numeric checks because the
     // StatEffect loader defaults "damage" to 100 and "mad" to 0 when those keys are absent.
-    //   1. "damage" key present  → physical attack skill (Power Strike, Strafe, Iron Arrow).
-    //   2. "mad" key present     → magic attack skill (Magic Claw, Cold Beam, Thunder Bolt).
-    //   3. mobCount > 1 + bbox   → bomb/explosion skill that derives damage from "x" instead
+    //   1. "damage" key present  â†’ physical attack skill (Power Strike, Strafe, Iron Arrow).
+    //   2. "mad" key present     â†’ magic attack skill (Magic Claw, Cold Beam, Thunder Bolt).
+    //   3. mobCount > 1 + bbox   â†’ bomb/explosion skill that derives damage from "x" instead
     //                              of "damage" (Hunter.ARROW_BOMB and similar).
     private static boolean declaresOffense(StatEffect effect) {
         return effect.hasDamage()
@@ -3784,7 +3802,7 @@ class BotCombatManager {
         if (skill == null || effect == null || !effect.isOverTime()) {
             return false;
         }
-        // Data-driven gate for "rebuffable self/party buff" — two WZ facts replace what used to
+        // Data-driven gate for "rebuffable self/party buff" â€” two WZ facts replace what used to
         // need per-skill exclusion lists:
         //   1. getDuration() > 0. The rebuff loop is timer-based: castSupportSkill sets
         //      nextBuffAt = now + duration*0.9 and only recasts once that elapses. Skills with no
@@ -3816,7 +3834,7 @@ class BotCombatManager {
 
     /**
      * Data-driven summon test: a summon's effect grants only the SUMMON (follow/circle hawk-type)
-     * or PUPPET (stationary decoy) buffstat — the WZ marks the summoned creature, not a caster
+     * or PUPPET (stationary decoy) buffstat â€” the WZ marks the summoned creature, not a caster
      * stat boost. Detecting it from the statups avoids a per-skill id list and matches the
      * server's spawn path (StatEffect.applyTo spawns the creature only when given a position).
      */

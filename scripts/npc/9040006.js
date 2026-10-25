@@ -31,6 +31,7 @@ function start() {
                 eim.setProperty("stage3combo", newCombo);
                 //cm.playerMessage("Debug: " + newCombo);
                 eim.setProperty("stage3attempt", "1");
+                Java.type("server.bots.BotGuildOfferings").reset(cm.getPlayer());
                 cm.sendOk("This fountain guards the secret passage to the throne room. Offer items in the area to the vassals to proceed. The vassals shall tell you whether your offerings are accepted, and if not, which vassals are displeased. You have seven attempts. Good luck.");
             } else {
                 var attempt = parseInt(eim.getProperty("stage3attempt"));
@@ -115,11 +116,13 @@ function start() {
                             spawnMob(9300036, -350, 150, cm.getPlayer().getMap());
                             spawnMob(9300037, 400, 150, cm.getPlayer().getMap());
 
+                            Java.type("server.bots.BotGuildOfferings").feedback(cm.getPlayer(), guess, correct, incorrect, unknown);
                             cm.sendOk(string);
                             eim.setProperty("stage3attempt", attempt + 1);
                         } else {
                             //reset the combo and mass spawn monsters
                             eim.setProperty("stage3combo", "reset");
+                            Java.type("server.bots.BotGuildOfferings").awaitStart(cm.getPlayer());
                             cm.sendOk("You have failed the test. Please compose yourselves and try again later.");
 
                             for (var i = 0; i < 6; i++) {

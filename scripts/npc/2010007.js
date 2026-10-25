@@ -24,7 +24,7 @@ var status = 0;
 var sel;
 
 function start() {
-    cm.sendSimple("What would you like to do?\r\n#b#L0#Create a Guild#l\r\n#L1#Disband your Guild#l\r\n#L2#Increase your Guild's capacity#l#k");
+    cm.sendSimple("What would you like to do?\r\n#b#L0#Create a Guild#l\r\n#L1#Disband your Guild#l\r\n#L2#Increase your Guild's capacity#l#k\r\n\r\n#eBotPQ Menu#n#b\r\n#L900#Return to GPQ and assemble my crew.#l\r\n#L901#Dismiss my GPQ cofounders or crew.#l#k");
 }
 
 function action(mode, type, selection) {
@@ -42,6 +42,16 @@ function action(mode, type, selection) {
         }
         if (status == 1) {
             sel = selection;
+            if (selection == 900 || selection == 901) {
+                var crew = Java.type("server.bots.BotGuildCompanions");
+                if (selection == 901) cm.sendOk(crew.release(cm.getPlayer()));
+                else if (cm.getPlayer().getGuildId() <= 0) cm.sendOk("Create your guild with Heracle first. You choose its name and confirm the normal fee.");
+                else {
+                    cm.warp(101030104, 0);
+                    cm.sendOk(crew.assemble(cm.getPlayer()));
+                }
+                cm.dispose(); return;
+            }
             if (selection == 0) {
                 if (cm.getPlayer().getGuildId() > 0) {
                     cm.sendOk("You may not create a new Guild while you are in one.");

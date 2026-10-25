@@ -35,11 +35,11 @@ final class BotPhysicsEngine {
         public float GRAVITY_PXS2 = 2000.0f;        // Physics.img gravityAcc
         public float JUMP_SPEED_PXS = 555.0f;       // Physics.img jumpSpeed
         public float JUMP_DOWN_PXS = 196.0f;        // measured -196 px/s down-jump kick (not in Physics.img)
-        public float JUMP_ROPE_PXS = 375.0f;        // rope-jump finding (NOT applied): real client kick = (±162, -277)
+        public float JUMP_ROPE_PXS = 375.0f;        // rope-jump finding (NOT applied): real client kick = (Â±162, -277)
         public float MAX_FALL_PXS = 670.0f;         // Physics.img fallSpeed
         // Flash Jump (Hermit/NightWalker) mid-air impulse, calibrated from logs/monitored-packets-flashjump*:
-        // a one-time set to (±550 horizontal, -350 vertical) px/s. 550 is a hard horizontal cap (did not
-        // scale with 138% speed). No WZ distance keys exist for the skill — this is a client constant.
+        // a one-time set to (Â±550 horizontal, -350 vertical) px/s. 550 is a hard horizontal cap (did not
+        // scale with 138% speed). No WZ distance keys exist for the skill â€” this is a client constant.
         public float FLASH_JUMP_H_PXS = 550.0f;
         public float FLASH_JUMP_V_PXS = -350.0f;
         public double HFORCE_PXS = 16.667;          // was 20.0 (yields 125 px/s walk via hF*GROUNDSLIP/(FRICTION+SLOPEFACTOR))
@@ -53,7 +53,7 @@ final class BotPhysicsEngine {
         // mass 100 and walkDrag 80000 / mass / 2 (client halves friction when fs<1).
         public double SLIP_WALK_ACCEL_PXSS = 1400.0;  // x fs -> px/s^2 while a direction is held
         public double SLIP_GLIDE_DECEL_PXSS = 400.0;  // x fs -> px/s^2 while gliding (no input)
-        // Airborne horizontal control — CONFIRMED in disassembly (Angel.idb,
+        // Airborne horizontal control â€” CONFIRMED in disassembly (Angel.idb,
         // CVecCtrl::CalcFloat @ 0x9b2c3c) and packet-fitted (logs/monitored-packets-
         // elnath-tricky-jumps-spd100v2.log fs=0.2; logs/monitored-packets -
         // 100speedjumpmovement.log fs=1.0):
@@ -67,7 +67,7 @@ final class BotPhysicsEngine {
         //     zero and pins at 8.93 x fs in the new direction (fs=1 packets:
         //     -103 -> -79 px/s over 120 ms = exactly +200 px/s^2); same-direction
         //     input adds ~nothing once moving. There is NO walkSpeed cap in the
-        //     air — the observed <= 125 px/s is the ground cap carried in by the
+        //     air â€” the observed <= 125 px/s is the ground cap carried in by the
         //     launch snap.
         //   - no input: drag toward 0 of 1 x fs px/s^2, switching to
         //     100 x fs px/s^2 while falling AT terminal velocity (vy = fallSpeed
@@ -88,16 +88,16 @@ final class BotPhysicsEngine {
         public int DOWN_JUMP_GRACE_MS = 350;
 
         // Swim physics. Bot ticks at 50ms (TICK_MS); constants are in px/s and
-        // px/s² so they're tick-rate independent. Ground-truth sources:
+        // px/sÂ² so they're tick-rate independent. Ground-truth sources:
         //   - wz/Map.wz/Physics.img.xml (named doubles: swimSpeed, swimForce,
         //     swimSpeedDec, floatDrag1, floatDrag2, floatCoefficient, etc.)
         //   - Angel.idb: CalcFloat@CVecCtrl @ 0x9b2c3c (swim integrator),
         //     JustJump@CVecCtrl @ 0x9b1d3d (swim jump impulse)
         public float SWIM_VEL_PXS = 140.0f;          // Physics.img swimSpeed
         // Constants below are output of an automated least-squares fitter
-        // (`tools/swim_fit.py`) — not hand-tuned. Decodes all swim packet
+        // (`tools/swim_fit.py`) â€” not hand-tuned. Decodes all swim packet
         // logs (burst, burst-upheld, upheld, downheld) into 34 (vy0, dur,
-        // vy_end) tuples and fits a linear-drag model dv/dt = g_eff - k·v
+        // vy_end) tuples and fits a linear-drag model dv/dt = g_eff - kÂ·v
         // via scipy differential_evolution. Quadratic drag term tested but
         // converged to zero. Re-run after collecting more packet captures.
         //
@@ -121,7 +121,7 @@ final class BotPhysicsEngine {
         // 0x9b2202 calls JustJump with no engine cooldown, but in practice
         // the swim-burst animation gates the next effective jump to ~500ms.
         public int SWIM_JUMP_COOLDOWN_MS = 500;
-        public int SWIM_LEVEL_BAND_PX = 30;          // |dy| <= this = "same level" → UP hold
+        public int SWIM_LEVEL_BAND_PX = 30;          // |dy| <= this = "same level" â†’ UP hold
         public int SWIM_DOWN_BAND_PX = 120;          // dy in (level, this] = free sink; > this = DOWN hold
         public int SWIM_JUMP_TRIGGER_DY_PX = 100;    // dy <= -this px = trigger JUMP burst (with cooldown)
     }
@@ -256,7 +256,7 @@ final class BotPhysicsEngine {
     // falls past the map floor ({@link #mapFloorY}). This big tick cap is only a runaway backstop (a
     // wall/ceiling bounce that never makes vertical progress); normal termination is the map-bound
     // early-exit. Sized large so a tall in-bounds shaft (the ~2100px Ellinia tree) always reaches the
-    // floor — the old flat 1500ms (~1000px at terminal velocity) cut long single-falls short, so no
+    // floor â€” the old flat 1500ms (~1000px at terminal velocity) cut long single-falls short, so no
     // landing was found and no DROP/JUMP/ROPE edge was generated, leaving the bot unable to descend.
     private static final int FALL_SIM_TICK_CAP = 2000;
 
@@ -288,7 +288,7 @@ final class BotPhysicsEngine {
         return profileOrBase(profile).ropeJumpSpeedPxs() * tickS();
     }
 
-    /** Flash Jump horizontal dash, px/tick (the ±550 px/s impulse converted via the tick rate). */
+    /** Flash Jump horizontal dash, px/tick (the Â±550 px/s impulse converted via the tick rate). */
     static float flashJumpHPerTick() {
         return cfg.FLASH_JUMP_H_PXS * tickS();
     }
@@ -318,15 +318,15 @@ final class BotPhysicsEngine {
 
     /**
      * Distance (px) needed for a bot starting from a standstill to reach (near) max walk speed
-     * before walking off a ledge. O(1) derivation from config constants — used by graphgen to
+     * before walking off a ledge. O(1) derivation from config constants â€” used by graphgen to
      * place directional-drop launch points without simulating the runway tick by tick.
      *
      * <p>Friction model: dv/dt = hF*slip - (friction+slope)*v. Terminal v_max = hF*slip/(friction+slope).
-     * Time to ~95% terminal ≈ 3/(friction+slope). We use a fixed multiple of walkStep that comfortably
+     * Time to ~95% terminal â‰ˆ 3/(friction+slope). We use a fixed multiple of walkStep that comfortably
      * exceeds the 95% mark for the calibrated constants without iterating.
      *
      * <p>Slippery ground is kinetic (see {@link #applySlipperyGroundStep}): the exact distance
-     * to top speed is v_max&sup2;/(2*accel*fs) — ~28 px at El Nath fs=0.2 — added on top of the
+     * to top speed is v_max&sup2;/(2*accel*fs) â€” ~28 px at El Nath fs=0.2 â€” added on top of the
      * fs=1 heuristic instead of the old 1/fs stretch (which over-reserved 180 px and starved
      * snow maps of launch anchors).
      */
@@ -353,7 +353,7 @@ final class BotPhysicsEngine {
 
     /**
      * Syncs ground position, then returns the foothold the bot is standing on.
-     * If no foothold is found the bot has walked off the edge — physics starts a fall and this
+     * If no foothold is found the bot has walked off the edge â€” physics starts a fall and this
      * returns null. Movement must check for null and return early without applying ground actions.
      */
     static Foothold syncAndDetectGround(BotEntry entry, Character bot) {
@@ -372,7 +372,7 @@ final class BotPhysicsEngine {
      * ABOVE the query point, so a bot standing under an unrelated overhead platform resolves to
      * that platform (100000102: on r14 at y=73, every x>=91 resolves to the r12 shelf at y=57,
      * 16px overhead). Any caller that owns a live {@link BotEntry} must use this, never the raw
-     * lookup — otherwise the motor and that caller disagree about the ground under the same bot.
+     * lookup â€” otherwise the motor and that caller disagree about the ground under the same bot.
      */
     static Foothold standingGroundFoothold(BotEntry entry, MapleMap map, Point position) {
         Foothold continuity = findContinuityGroundFoothold(entry, map, position);
@@ -428,14 +428,14 @@ final class BotPhysicsEngine {
 
     /**
      * SSOT for teleport position resolution: the nav layer supplies only an INTENT (a direction), and
-     * physics resolves the legal landing — or null when blocked (no platform to snap to). Mirrors the
+     * physics resolves the legal landing â€” or null when blocked (no platform to snap to). Mirrors the
      * client's directional teleport so navigation can never cheat into an impossible spot:
-     *  - HORIZONTAL ({@code dirX}=±1, dirY=0): move {@code range} px; snap to the platform CLOSEST
-     *    VERTICALLY to the origin within ±{@code ySnap}. A same-level platform beats a higher/lower
+     *  - HORIZONTAL ({@code dirX}=Â±1, dirY=0): move {@code range} px; snap to the platform CLOSEST
+     *    VERTICALLY to the origin within Â±{@code ySnap}. A same-level platform beats a higher/lower
      *    diagonal one (the bug this was written to fix). null if none in the band.
      *  - UP ({@code dirY}<0): the FURTHEST platform within {@code range} directly above. null if none.
      *  - DOWN ({@code dirY}>0): the FURTHEST platform within {@code range} directly below (symmetric
-     *    with UP — a down-teleport is a full-range downward blink, not a short prone hop). Never a rope
+     *    with UP â€” a down-teleport is a full-range downward blink, not a short prone hop). Never a rope
      *    (pointBelowIndexed is foothold-only). null if none.
      */
     static Point teleportLanding(MapleMap map, Point origin, int dirX, int dirY, int range, int ySnap) {
@@ -462,7 +462,7 @@ final class BotPhysicsEngine {
         return null;
     }
 
-    /** Platform at x whose surface is closest vertically to {@code referenceY} within ±{@code ySnap}
+    /** Platform at x whose surface is closest vertically to {@code referenceY} within Â±{@code ySnap}
      *  (same-level priority); null if none. Compares the at/just-below candidate against the highest
      *  candidate in the upper band so a same-level platform always beats a higher diagonal one. */
     private static Point closestPlatformWithin(MapleMap map, int x, int referenceY, int ySnap) {
@@ -586,10 +586,10 @@ final class BotPhysicsEngine {
 
     /**
      * Client truth (v83 CVecCtrl::CalcWalk/CollisionDetectWalk + live test on 600020100 x=-1315):
-     * ground walking does NO wall scan at all — a walker follows its standing foothold's prev/next
+     * ground walking does NO wall scan at all â€” a walker follows its standing foothold's prev/next
      * chain, and the only "wall stop" is the chain itself ending at a vertical link (which the
      * region model already encodes: regions end there). So a ground runway is blocked only by the
-     * map side boundary. Maps with no region model (mocked trees) keep the old any-wall stop —
+     * map side boundary. Maps with no region model (mocked trees) keep the old any-wall stop â€”
      * their hand-built footholds have no chain/region data to walk by.
      */
     static boolean isGroundRunwayBlockedByWall(MapleMap map, Point from, Point to) {
@@ -600,7 +600,7 @@ final class BotPhysicsEngine {
         if (collision.foothold() == null) {
             return true; // map side boundary
         }
-        return resolveWalkRegionLookup(map) == null; // no region model — conservative legacy stop
+        return resolveWalkRegionLookup(map) == null; // no region model â€” conservative legacy stop
     }
 
     static boolean isGroundFarBelow(MapleMap map, Point position) {
@@ -622,7 +622,7 @@ final class BotPhysicsEngine {
         return lookup.regionIdByFootholdId().getOrDefault(foothold.getId(), -1) >= 0;
     }
 
-    /** True when {@code candidateFootholdId} is the standing foothold or its direct prev/next link —
+    /** True when {@code candidateFootholdId} is the standing foothold or its direct prev/next link â€”
      *  i.e. a foothold you reach by continuing to walk along the chain (not by dropping onto a fork arm). */
     private static boolean isChainStep(Foothold foothold, int candidateFootholdId) {
         return candidateFootholdId == foothold.getId()
@@ -722,6 +722,7 @@ final class BotPhysicsEngine {
                                          Map<Integer, BotNavigationGraph.Region> regionsById,
                                          Map<Integer, Integer> regionIdByFootholdId,
                                          Map<Integer, Foothold> footholdsById) {
+        BotRopeExitCache.clear();
         if (map == null || regionsById == null || regionIdByFootholdId == null || footholdsById == null) {
             ACTIVE_BUILD_WALK_REGION_LOOKUP.remove();
             return;
@@ -730,6 +731,7 @@ final class BotPhysicsEngine {
     }
 
     static void clearBuildWalkRegionLookup() {
+        BotRopeExitCache.clear();
         ACTIVE_BUILD_WALK_REGION_LOOKUP.remove();
     }
 
@@ -799,7 +801,7 @@ final class BotPhysicsEngine {
                     return new GroundStepPreview(baseY, currentPos, foothold, false, true);
             }
         }
-        // Client ground walking scans NO walls (CVecCtrl::CalcWalk — chain traversal only; the
+        // Client ground walking scans NO walls (CVecCtrl::CalcWalk â€” chain traversal only; the
         // region model encodes the chain, so region-constrained sampling below IS the junction
         // stop). Only the map side boundary still blocks. Maps without a region model keep the
         // legacy any-wall stop: their walkers snap by raw findBelow and would otherwise cross
@@ -859,7 +861,7 @@ final class BotPhysicsEngine {
 
     /** Pixel path length along a committed route's edge chain: each edge's start->end segment plus the
      *  gap between consecutive edges. 0 for a null/empty route. The "distance without live A*" the
-     *  motion-plan duration uses (design §2.1) — the route was already planned; we only measure it. */
+     *  motion-plan duration uses (design Â§2.1) â€” the route was already planned; we only measure it. */
     static double routePixelLength(java.util.List<BotNavigationGraph.Edge> route) {
         if (route == null || route.isEmpty()) {
             return 0.0;
@@ -879,26 +881,26 @@ final class BotPhysicsEngine {
         return total;
     }
 
-    /** Straight-line distance with the §2.1 slack factor, used when no committed route exists. */
+    /** Straight-line distance with the Â§2.1 slack factor, used when no committed route exists. */
     static double straightLinePixelLength(Point from, Point to) {
         return from == null || to == null ? 0.0 : from.distance(to) * 1.3;
     }
 
     /** Motion-plan traversal time (ms) for {@code pixelDistance} at the bot's real ground speed (px/s,
-     *  the same {@link BotMovementProfile#walkVelocityPxs()} physics integrates), with ±10% humanlike
+     *  the same {@link BotMovementProfile#walkVelocityPxs()} physics integrates), with Â±10% humanlike
      *  jitter. Never below 1ms so arrival is always strictly after departure. */
     static long motionDurationMs(double pixelDistance, double groundPxPerSec, java.util.Random rng) {
         if (pixelDistance <= 0 || groundPxPerSec <= 0) {
             return 0L;
         }
         double seconds = pixelDistance / groundPxPerSec;
-        double jitter = rng == null ? 1.0 : 1.0 + (rng.nextDouble() - 0.5) * 0.2; // ±10%
+        double jitter = rng == null ? 1.0 : 1.0 + (rng.nextDouble() - 0.5) * 0.2; // Â±10%
         return Math.max(1L, Math.round(seconds * 1000.0 * jitter));
     }
 
     /** Lerp the plan position by wall clock. Before depart -> from; after arrive -> to. Y holds at
      *  {@code holdY} (the foothold Y) the whole way; exact Y is only reconciled at the LOD0
-     *  transition foothold snap (§4). Returns null only when both endpoints are null. */
+     *  transition foothold snap (Â§4). Returns null only when both endpoints are null. */
     static Point motionLerp(Point from, Point to, long departMs, long arriveMs, int holdY, long nowMs) {
         if (from == null && to == null) {
             return null;
@@ -918,12 +920,12 @@ final class BotPhysicsEngine {
     }
 
     /** Min drop (px) below the portal landing before a map-change spawn falls by gravity instead of
-     *  snapping. Below this the floor is effectively at the spawn point — snap (no visible drop). */
+     *  snapping. Below this the floor is effectively at the spawn point â€” snap (no visible drop). */
     static final int SPAWN_FALL_MIN_DROP_PX = 12;
 
     /** Settle a bot that just changed map. When it lands on/near the floor, snap as before. But when the
      *  destination portal drops it meaningfully ABOVE the floor, leave it at the spawn point, zero its
-     *  velocity, and enter the AIR so the normal physics ticks ease it down under gravity — the way a real
+     *  velocity, and enter the AIR so the normal physics ticks ease it down under gravity â€” the way a real
      *  player spawns at a portal and falls, instead of hard-snapping its Y (which reads as a position
      *  warp). The fall resolves in the following ticks when a foothold catches it. */
     static void spawnIntoMap(BotEntry entry, Character bot) {
@@ -988,7 +990,7 @@ final class BotPhysicsEngine {
 
     static void beginGroundJump(BotEntry entry, Character bot, int airVelX) {
         entry.blockedRopeGrab = null;
-        // In swim maps, physics owns horizontal motion — drop any committed
+        // In swim maps, physics owns horizontal motion â€” drop any committed
         // airVelX/fixedAirArc the caller passed so swim integrator can steer.
         // Movement layer expresses *intent only* in water.
         if (bot.getMap() != null && bot.getMap().isSwim()) {
@@ -1069,7 +1071,7 @@ final class BotPhysicsEngine {
         attachToRope(entry, bot, rope, ropeY);
     }
 
-    /** Called by navigation when a DROP edge is executed — bot intentionally walks off a ledge. */
+    /** Called by navigation when a DROP edge is executed â€” bot intentionally walks off a ledge. */
     static void executeDrop(BotEntry entry, Character bot, int airVelX) {
         beginFall(entry, bot, airVelX);
     }
@@ -1152,7 +1154,7 @@ final class BotPhysicsEngine {
         // still holds stale AIRBORNE steering, not the ground continuation direction, so the old
         // "opposite held key zeroes hspeed" brake fired on noise: it killed the landing momentum and,
         // because setMovementVelocity only re-derives facing when velX != 0, left facingDir stuck at
-        // the air-steer direction — the bot visibly faced backwards on landing even when continuing.
+        // the air-steer direction â€” the bot visibly faced backwards on landing even when continuing.
         // Keep the halved landing momentum (set above) so the bot rides it and faces its travel
         // direction; the next ground tick's applyGroundMotion brakes on the REAL planned direction
         // (and slipperyStopDir still prevents sliding off an icy ledge).
@@ -1341,8 +1343,8 @@ final class BotPhysicsEngine {
      * fractional physX phase, sub-step carryMs, and hspeed (standing start at the anchor vs
      * walking through at full speed), which shifts the exact dismount pixel and the seeded air
      * drift by a rounding step (e.g. 6 vs 7 px/tick at 105% speed). Returns the walk-off outcome
-     * for a spread of those launch states — baseline (the historical single sim: phase 0,
-     * standing start) FIRST — so graphgen can check the landing is stable across all of them
+     * for a spread of those launch states â€” baseline (the historical single sim: phase 0,
+     * standing start) FIRST â€” so graphgen can check the landing is stable across all of them
      * before authoring an edge from just one. Entries may be null (that variant found no landing).
      */
     static java.util.List<WalkOffLanding> walkOffLandingVariants(MapleMap map,
@@ -1378,7 +1380,7 @@ final class BotPhysicsEngine {
      * {@code standingFoothold} is the ground the walker is actually on. Pass it whenever the
      * caller knows it ({@link #standingGroundFoothold} for a live bot, the source region's
      * surface for graph authoring): resolving it from {@code from} alone re-runs the ambiguous
-     * coordinate lookup and can start the walk on a foreign chain — an overhead platform within
+     * coordinate lookup and can start the walk on a foreign chain â€” an overhead platform within
      * MAX_SLOPE_UP wins the nearest-ground vote and the sim then walks off THAT platform's lip
      * instead. Null falls back to the coordinate lookup (synthetic/test callers with no chain).
      */
@@ -1443,7 +1445,7 @@ final class BotPhysicsEngine {
         Point cursor = new Point(landing.point());
         Foothold currentFoothold = landing.foothold();
         if (mapGroundSlipScale(map, profile) < 1.0) {
-            // Slippery landing: stop-policy parity with the live tick (slipperyStopDir) —
+            // Slippery landing: stop-policy parity with the live tick (slipperyStopDir) â€”
             // glide when the glide-out stays on ground, counter-strafe brake when it would
             // slide off. Validity is "can the bot land here and come to a stop"; the policy
             // is deterministic, so the graph gains no extra state.
@@ -1451,7 +1453,7 @@ final class BotPhysicsEngine {
                 int dir = slipperyStopDir(map, profile, cursor, currentFoothold, state);
                 if (dir == 0) {
                     // Stopped/sub-residual, or the glide-out was projected to stay on
-                    // ground — either way this landing is stable.
+                    // ground â€” either way this landing is stable.
                     return new PostLandingJump(landing, cursor, currentFoothold, false);
                 }
                 GroundStepResult step = simulateGroundMotion(map, cursor, currentFoothold, dir, state, profile);
@@ -1483,11 +1485,11 @@ final class BotPhysicsEngine {
     /**
      * Intent-driven swim integrator fitted to client behavior.
      * the only inputs are discrete intents on {@link BotEntry}:
-     *   swimMoveDir       — -1/0/+1 horizontal steer
-     *   swimVerticalHold  — -1 (UP slow sink) / 0 (free sink) / +1 (DOWN fast sink)
-     *   swimJumpRequested — one-shot upward burst (consumed here)
+     *   swimMoveDir       â€” -1/0/+1 horizontal steer
+     *   swimVerticalHold  â€” -1 (UP slow sink) / 0 (free sink) / +1 (DOWN fast sink)
+     *   swimJumpRequested â€” one-shot upward burst (consumed here)
      *
-     * Movement layer never writes velY/hspeed directly — the engine owns physics.
+     * Movement layer never writes velY/hspeed directly â€” the engine owns physics.
      * On contact with a foothold floor the bot transitions out of swim mode
      * (entry.inAir = false) so the next tick routes through tickGrounded and the
      * bot walks normally on the platform. This matches the real client behavior
@@ -1501,7 +1503,7 @@ final class BotPhysicsEngine {
 
         // First tick after entering swim mode: rebase the integrator on the bot's
         // authoritative position and discard any committed-airborne state from
-        // the launch (airVelX, fixedAirArc) — swim physics owns motion now.
+        // the launch (airVelX, fixedAirArc) â€” swim physics owns motion now.
         if (!entry.swimming) {
             entry.physX = pos.x;
             entry.physY = pos.y;
@@ -1510,14 +1512,14 @@ final class BotPhysicsEngine {
             entry.fixedAirArc = false;
             entry.downJumpPending = false;
             entry.downJumpGracePeriodMS = 0L;
-            // Preserve velY/hspeed from launch — a jump-off-platform should
+            // Preserve velY/hspeed from launch â€” a jump-off-platform should
             // still arc upward under swim physics (a NORMAL kick
             // immediately followed by SWIMMING integration).
         } else if (Math.abs(entry.physX - pos.x) > 2 || Math.abs(entry.physY - pos.y) > 2) {
             // External teleport (mob-touch knockback, !warp, position correction)
             // moved the authoritative position out from under the integrator.
             // Without rebase, the next sweep starts from a stale physX/physY and
-            // can advance through a foothold without registering the floor —
+            // can advance through a foothold without registering the floor â€”
             // bot tunnels straight through the platform. Resync to the truth.
             entry.physX = pos.x;
             entry.physY = pos.y;
@@ -1530,7 +1532,7 @@ final class BotPhysicsEngine {
         if (entry.swimJumpRequested) {
             // Swim-jump impulse scales with character SPEED stat, not jump stat.
             // Per JustJump@CVecCtrl @ 0x9b1d3d swim branch:
-            //   swim_jump = stat[+0x6c] × physcfg[+0x48] × speedScale × 5.0
+            //   swim_jump = stat[+0x6c] Ã— physcfg[+0x48] Ã— speedScale Ã— 5.0
             // stat[+0x6c] is the speed-related field (cf. walk path stat[+0x84]
             // for jump). At base 100 stat both are 1.0; jumpMultiplier would be
             // wrong here for any speed-buffed/jump-buffed character.
@@ -1573,7 +1575,7 @@ final class BotPhysicsEngine {
             if (vx >  cap && entry.swimMoveDir > 0) vx =  cap;
             if (vx < -cap && entry.swimMoveDir < 0) vx = -cap;
         }
-        // Vertical sink cap — discrete intent picks the terminal velocity.
+        // Vertical sink cap â€” discrete intent picks the terminal velocity.
         // Upward velocity (vy < 0) is unaffected so jump bursts still arc up.
         double sinkCap = switch (Integer.signum(entry.swimVerticalHold)) {
             case -1 -> cfg.SWIM_UP_MAX_SINK_PXS;
@@ -1664,7 +1666,7 @@ final class BotPhysicsEngine {
      * input band (walkSpeed/14 x fs = 8.93 x fs px/s); hard clamp to the band edge on
      * overshoot; no-op (no accel, no clamp) when already moving faster in the input direction.
      * A counter-strafe decelerates straight through zero and pins at the band edge in the new
-     * direction — mid-air input can never rebuild walk speed.
+     * direction â€” mid-air input can never rebuild walk speed.
      */
     private static void applyAirSteering(BotEntry entry, MapleMap map, int steerDir) {
         if (steerDir == 0) return;
@@ -1677,7 +1679,7 @@ final class BotPhysicsEngine {
             inDir = Math.min(band, inDir + cfg.AIR_CONTROL_ACCEL_PXSS * fs * t * t);
             entry.airSteerVelX = inDir * steerDir - entry.airVelX;
         }
-        // else: ApplyForce no-op — neither accelerates nor clamps an over-band velocity
+        // else: ApplyForce no-op â€” neither accelerates nor clamps an over-band velocity
         // in the input direction (an over-cap knockback launch keeps its speed too).
         // Client jump stance follows the held steering direction, not the preserved horizontal
         // launch momentum. Updating facing here makes airborne debug output line up with what the
@@ -1689,7 +1691,7 @@ final class BotPhysicsEngine {
      * No-input airborne drag (CalcFloat @ 0x9b2c3c): vx decays toward 0 at 1 x fs px/s^2,
      * switching to 100 x fs px/s^2 while falling AT terminal velocity; clamped at zero-cross.
      * NOT applied to committed nav arcs (fixedAirArc): those model the launch direction key
-     * held for the whole flight — held input suppresses drag and is a no-op above the input
+     * held for the whole flight â€” held input suppresses drag and is a no-op above the input
      * band, keeping vx constant exactly like the graph's constant-stepX arc simulation.
      */
     private static void applyAirDrag(BotEntry entry, MapleMap map) {
@@ -1732,16 +1734,16 @@ final class BotPhysicsEngine {
   /**
      * Intent-driven airborne integrator. Reads {@link BotEntry#moveDir} for horizontal
      * air steering (-1/0/+1). Movement layer holds the LAUNCH key for committed nav
-     * trajectories (fixedAirArc, JUMP/DROP edges) — a no-op above the input band that
-     * keeps vx constant — and leaves moveDir=0 for free no-input flight, which gets
+     * trajectories (fixedAirArc, JUMP/DROP edges) â€” a no-op above the input band that
+     * keeps vx constant â€” and leaves moveDir=0 for free no-input flight, which gets
      * the CalcFloat drag instead.
      *
      * One physics step: apply air steering/drag from intent, advance position, resolve collision, apply result.
-     * All collision outcome methods are private — movement must not call them directly.
+     * All collision outcome methods are private â€” movement must not call them directly.
      */
     static AirborneStepResult stepAirborne(BotEntry entry, Character bot) {
         // Apply air steering from intent. Movement holds the launch key for committed
-        // trajectories (input no-op above the band — vx constant); free flight with no
+        // trajectories (input no-op above the band â€” vx constant); free flight with no
         // input gets the CalcFloat drag instead. fixedAirArc additionally guards direct
         // stepAirborne callers that bypass the movement layer's key-hold emulation.
         if (entry.moveDir != 0) {
@@ -1751,7 +1753,7 @@ final class BotPhysicsEngine {
         }
 
         // Flash Jump: one-time mid-air impulse fired at apex (velY crosses to >= 0). Overrides this
-        // tick's velocity with the dash (±550, -350 px/s) and pins the arc so steering/drag leave it
+        // tick's velocity with the dash (Â±550, -350 px/s) and pins the arc so steering/drag leave it
         // alone (applyAirSteering is a no-op above the input band; fixedAirArc skips drag).
         if (entry.pendingFlashJump && entry.velY >= 0f) {
             int dir = entry.airVelX != 0 ? Integer.signum(entry.airVelX) : (entry.facingDir >= 0 ? 1 : -1);
@@ -1764,8 +1766,11 @@ final class BotPhysicsEngine {
         }
 
         Point previousPos = roundedAirPosition(entry);
+        double previousX = entry.physX, previousY = entry.physY;
+        float previousVelocityY = entry.velY;
         Point nextPos = advanceAirbornePosition(entry, bot);
-        AirCollision collision = resolveAirCollision(bot.getMap(), previousPos, nextPos,
+        AirCollision collision = resolveAirStepCollision(bot.getMap(), previousPos, nextPos,
+                previousX, previousY, previousVelocityY, entry.physX - previousX,
                 moverZMassFor(entry, bot.getMap()));
         if (entry.climbUpIntent) {
             for (Rope rope : bot.getMap().getRopes()) {
@@ -1981,7 +1986,7 @@ final class BotPhysicsEngine {
         return foothold != null && !foothold.isForbidFallDown();
     }
 
-    /** forbidFallDown footholds are never pass-through — they stay solid even inside a
+    /** forbidFallDown footholds are never pass-through â€” they stay solid even inside a
      *  down-jump grace window (matches the client; the grace only skips normal platforms). */
     private static boolean forbidFallDownLanding(AirCollision collision) {
         return collision.foothold() != null && collision.foothold().isForbidFallDown();
@@ -2009,7 +2014,7 @@ final class BotPhysicsEngine {
     }
 
     /** Flash-jump trajectory: a normal jump launch with the apex impulse injected (mirrors execution).
-     *  {@code stepX} sets the launch direction; the apex dash magnitude is the client ±550 px/s cap. */
+     *  {@code stepX} sets the launch direction; the apex dash magnitude is the client Â±550 px/s cap. */
     static JumpLanding simulateFlashJumpLanding(MapleMap map, Point from, int stepX, BotMovementProfile profile) {
         int dashStep = Math.round(Integer.signum(stepX) * flashJumpHPerTick());
         return simulateLanding(map, from, -jumpForcePerTick(profile), stepX, 0L,
@@ -2028,11 +2033,11 @@ final class BotPhysicsEngine {
         return simulatePostLandingGroundTicks(map, landing, Integer.compare(stepX, 0), profile, postLandingTicks);
     }
 
-    // A down-jump falls through the platform and keeps falling until it lands — NO drop-distance
+    // A down-jump falls through the platform and keeps falling until it lands â€” NO drop-distance
     // cap. An earlier 300px cap (attributed to a CUserLocal::FallDown probe) was empirically wrong:
     // it refused down-jumps players can perform in-game (e.g. descending the Orbis station tower)
     // and stranded bots on islanded platforms. The exact client eligibility rule is still unknown
-    // (it's neither a 300px probe nor purely the forbidFallDown flag) — until it's pinned, generate
+    // (it's neither a 300px probe nor purely the forbidFallDown flag) â€” until it's pinned, generate
     // the edge wherever a real landing exists below and let execution abandon any that prove illegal.
     static JumpLanding simulateDownJumpLanding(MapleMap map, Point from) {
         if (!canStartDownJump(map, from)) {
@@ -2050,7 +2055,22 @@ final class BotPhysicsEngine {
     }
 
     static JumpLanding simulateRopeJumpLanding(MapleMap map, Point from, int stepX, BotMovementProfile profile) {
-        return simulateLanding(map, from, -ropeJumpForcePerTick(profile), stepX, 0L);
+        // Rope regions do not encode the last ground's collision group. A rope
+        // exit must land on the same foothold for every possible retained group,
+        // rather than baking a base-walls-only arc that some arrivals cannot fly.
+        JumpLanding expected = simulateLanding(map, from, -ropeJumpForcePerTick(profile), stepX, 0L, null, MOVER_ZMASS_UNKNOWN);
+        if (expected == null) return null;
+        java.util.Set<Integer> groups = new java.util.HashSet<>();
+        for (Foothold wall : collisionIndex(map).walls()) {
+            // A new group can first alter the baseline arc only at a wall it
+            // actually crosses; horizontal motion is monotone until that hit.
+            if (wall.getX1() < Math.min(from.x, expected.point().x)
+                    || wall.getX1() > Math.max(from.x, expected.point().x)) continue;
+            if (!groups.add(wall.getZMass())) continue;
+            JumpLanding variant = simulateLanding(map, from, -ropeJumpForcePerTick(profile), stepX, 0L, null, wall.getZMass());
+            if (variant == null || variant.foothold().getId() != expected.foothold().getId()) return null;
+        }
+        return expected;
     }
 
     static int estimateJumpLandingTimeMs(MapleMap map, Point from, int stepX) {
@@ -2099,10 +2119,10 @@ final class BotPhysicsEngine {
 
     /**
      * Mover zMass of a live bot: the group of the region the bot last resolved to. Reuses the nav
-     * layer's chain-continuity tracking ({@link BotEntry#lastRegionId}) — the client equivalent is
+     * layer's chain-continuity tracking ({@link BotEntry#lastRegionId}) â€” the client equivalent is
      * CVecCtrl::m_lZMass, set from the attached foothold and KEPT while airborne. A region is one
      * foothold chain, and WZ chains never cross zMass groups, so any segment's foothold carries the
-     * region's group. Unknown region → {@link #MOVER_ZMASS_UNKNOWN} (base-group walls only, same as
+     * region's group. Unknown region â†’ {@link #MOVER_ZMASS_UNKNOWN} (base-group walls only, same as
      * a fresh client mover).
      */
     static int moverZMassFor(BotEntry entry, MapleMap map) {
@@ -2130,7 +2150,7 @@ final class BotPhysicsEngine {
 
     /** Mover zMass for a sim launched at {@code from}: the group of the foothold under the launch
      *  point when it is effectively standing there, else unknown. Where two chains overlap at the
-     *  same pixel (shared ground) the chain-blind lookup can pick either group — acceptable: both
+     *  same pixel (shared ground) the chain-blind lookup can pick either group â€” acceptable: both
      *  grounds coincide there and the mis-pick only re-enables that structure's own walls. */
     private static int moverZMassAt(MapleMap map, Point from) {
         if (map == null || from == null) {
@@ -2142,9 +2162,44 @@ final class BotPhysicsEngine {
         }
         Point ground = findGroundPoint(map, from);
         if (ground == null || Math.abs(ground.y - from.y) > cfg.MAX_SLOPE_UP) {
-            return MOVER_ZMASS_UNKNOWN; // airborne start — last-stood group unknown to the sim
+            return MOVER_ZMASS_UNKNOWN; // airborne start â€” last-stood group unknown to the sim
         }
         return foothold.getZMass();
+    }
+
+    /** Sweep both halves when a tick straddles the apex. A straight endpoint sweep
+     * misses ledges the unchanged ballistic arc actually reaches between samples.
+     * Shared by live movement, baked landings and rope-grab simulations. */
+    private static AirCollision resolveAirStepCollision(MapleMap map, Point previousPos, Point nextPos,
+                                                        double previousX, double previousY,
+                                                        float previousVelocityY, double deltaX,
+                                                        int moverZMass) {
+        float gravity = gravityPerTick();
+        if (previousVelocityY < 0 && previousVelocityY + gravity > 0) {
+            double fraction = -previousVelocityY / gravity;
+            Point apex = new Point((int) Math.round(previousX + deltaX * fraction),
+                    (int) Math.round(previousY + previousVelocityY * fraction
+                            + 0.5 * gravity * fraction * fraction));
+            AirCollision first = resolveAirCollision(map, previousPos, apex, moverZMass);
+            if (first.type() != AirCollisionType.NONE) {
+                return new AirCollision(first.type(), first.point(), first.foothold(),
+                        first.progress() * fraction);
+            }
+            // This is the real airborne apex, not a takeoff point: a vertical
+            // jump may land tangentially here without the usual forward-only gate.
+            AirCollision tangent = landingAtProbeY(map, apex, nextPos, apex.x, apex.y,
+                    0.0, apex.y, true);
+            if (tangent.type() == AirCollisionType.LAND) {
+                return new AirCollision(tangent.type(), tangent.point(), tangent.foothold(), fraction);
+            }
+            AirCollision second = resolveAirCollision(map, apex, nextPos, moverZMass);
+            if (second.type() != AirCollisionType.NONE) {
+                return new AirCollision(second.type(), second.point(), second.foothold(),
+                        fraction + second.progress() * (1.0 - fraction));
+            }
+            return AirCollision.none();
+        }
+        return resolveAirCollision(map, previousPos, nextPos, moverZMass);
     }
 
     private static AirCollision resolveAirCollision(MapleMap map, Point previousPos, Point nextPos, int moverZMass) {
@@ -2206,7 +2261,7 @@ final class BotPhysicsEngine {
                 landOnGround(entry, bot, landing);
             } else {
                 // Top of a rope always connects to a foothold in valid map data.
-                // If none is found, clamp to topY and hold rather than falling — the bot will
+                // If none is found, clamp to topY and hold rather than falling â€” the bot will
                 // recover on re-path. Falling here would cause the oscillation bug where the bot
                 // climbs to the top, falls, re-grabs the rope, and loops indefinitely.
                 setClimbPosition(entry, bot, rope, firstClimbableY(rope));
@@ -2351,7 +2406,7 @@ final class BotPhysicsEngine {
 
     /**
      * Slippery ground (fs&lt;1) is kinetic, not the force/drag model: packet captures show
-     * LINEAR velocity ramps — constant accel {@code SLIP_WALK_ACCEL_PXSS x fs} while a
+     * LINEAR velocity ramps â€” constant accel {@code SLIP_WALK_ACCEL_PXSS x fs} while a
      * direction is held (hard-capped at the profile's walk speed; the cap scales with the
      * speed stat, the accel does not) and constant decel {@code SLIP_GLIDE_DECEL_PXSS x fs}
      * while gliding. El Nath fs=0.2: 0 to 125 px/s in ~0.45 s, ~1.6 s / ~98 px to slide out.
@@ -2386,7 +2441,7 @@ final class BotPhysicsEngine {
     /**
      * WZ {@code info/fs} is the field's SLIPPERINESS factor (El Nath snow = 0.2), not a speed
      * multiplier: the client scales walk force AND friction by it, so top speed is unchanged
-     * while acceleration and braking take 1/fs as long — slow starts, long slides. (It was
+     * while acceleration and braking take 1/fs as long â€” slow starts, long slides. (It was
      * previously misread as a ground-speed scale, which made El Nath bots crawl at 20% speed.)
      */
     private static double mapGroundSlipScale(MapleMap map) {
@@ -2395,14 +2450,14 @@ final class BotPhysicsEngine {
     }
 
     /** Like {@link #mapGroundSlipScale(MapleMap)}, but snowshoes (worn-shoe WZ fs >= 1, see
-     *  BotMovementProfile) cancel the field's slipperiness — normal physics on snow. */
+     *  BotMovementProfile) cancel the field's slipperiness â€” normal physics on snow. */
     private static double mapGroundSlipScale(MapleMap map, BotMovementProfile profile) {
         return profileOrBase(profile).snowShoes() ? 1.0 : mapGroundSlipScale(map);
     }
 
     /**
      * Counter-strafe braking: on slippery ground a held opposite input sheds speed at
-     * {@code SLIP_WALK_ACCEL_PXSS x fs} — 3.5x the passive glide — exactly like a player
+     * {@code SLIP_WALK_ACCEL_PXSS x fs} â€” 3.5x the passive glide â€” exactly like a player
      * counter-strafing to stop on a small platform. Returns the brake direction while the
      * bot slides faster than one brake tick can cancel, else 0 (the residual glide-out is
      * under ~1 px). Always 0 on non-slippery ground or with snowshoes.
@@ -2419,8 +2474,8 @@ final class BotPhysicsEngine {
 
     /**
      * Stop policy while a bot intends to stand on slippery ground: GLIDE (the packet-true
-     * 80*fs px/s^2 — what real players look like when they let go) unless the projected
-     * input-free glide-out would slide off the ground, in which case counter-strafe brake —
+     * 80*fs px/s^2 â€” what real players look like when they let go) unless the projected
+     * input-free glide-out would slide off the ground, in which case counter-strafe brake â€”
      * a player saving themselves near an edge. Projection reuses the live ground sim so
      * ledge/wall semantics stay identical; re-evaluated every tick, so a brake releases the
      * moment the remaining slide is safe.
@@ -2465,7 +2520,7 @@ final class BotPhysicsEngine {
 
     /**
      * {@code overshootSlackPx}: extra distance past the target that still counts as arrival
-     * instead of overshoot — callers steering into a launch WINDOW pass the room between the
+     * instead of overshoot â€” callers steering into a launch WINDOW pass the room between the
      * target pixel and the window's far edge. Without it the smallest legal 50ms pulse from
      * rest (~1.6px at fs=0.2) can exceed the remaining 1-2px to the target pixel and the
      * controller refuses to accelerate at all, parking the bot just outside a tight window
@@ -2526,7 +2581,7 @@ final class BotPhysicsEngine {
     }
 
     /** Profile walk speed in px/tick. There is NO walkSpeed cap in the air (CalcFloat
-     *  @ 0x9b2c3c) — the observed |vx| <= walkSpeed is the ground cap carried in by the
+     *  @ 0x9b2c3c) â€” the observed |vx| <= walkSpeed is the ground cap carried in by the
      *  launch snap. Used to derive the airborne input band (walkSpeed/14 x fs). */
     private static double walkSpeedPerTick(BotMovementProfile profile) {
         return maxHSpeedPerClientStep(profile) * Math.max(1.0, cfg.TICK_MS / CLIENT_GROUND_STEP_MS);
@@ -2534,8 +2589,8 @@ final class BotPhysicsEngine {
 
     /**
      * Ground momentum carried into the air when jumping with NO direction held, in air px/tick
-     * units (packet-verified: standing/no-input jumps carry the current hspeed — 0 -> 0, 3 -> 3,
-     * 9 -> 10, 29 -> 29 px/s — while a held direction snaps to +-walkSpeed instead).
+     * units (packet-verified: standing/no-input jumps carry the current hspeed â€” 0 -> 0, 3 -> 3,
+     * 9 -> 10, 29 -> 29 px/s â€” while a held direction snaps to +-walkSpeed instead).
      */
     static int carriedAirVelX(MapleMap map, BotEntry entry) {
         return (int) Math.round(tickDeltaFromGroundHSpeed(map, entry.hspeed, entry.movementProfile));
@@ -2547,7 +2602,7 @@ final class BotPhysicsEngine {
     }
 
     // Horizontal reach of a jump that is allowed to keep falling `dropPx` BELOW its launch height
-    // before the move ends — e.g. grabbing a rope whose climbable span hangs below the ledge.
+    // before the move ends â€” e.g. grabbing a rope whose climbable span hangs below the ledge.
     // maxHorizontalTravel only counts the arc back to launch height; a rope that extends lower lets
     // the bot drift sideways through the entire descent, reaching meaningfully farther (this is the
     // common "stand by a ladder, jump and catch it" maneuver). Reduces to maxHorizontalTravel at
@@ -2602,16 +2657,16 @@ final class BotPhysicsEngine {
     }
 
     /** Mover zMass sentinel: collide with EVERY wall regardless of group (legacy/conservative paths
-     *  that predate the zMass model — mocked trees and no-region maps). */
+     *  that predate the zMass model â€” mocked trees and no-region maps). */
     static final int MOVER_ZMASS_ALL = Integer.MIN_VALUE;
     /** Mover zMass sentinel: group unknown (fresh mover, never attached). Client inits CVecCtrl the
-     *  same way (CUser::GetZMass returns -1) — only base-group walls collide. */
+     *  same way (CUser::GetZMass returns -1) â€” only base-group walls collide. */
     static final int MOVER_ZMASS_UNKNOWN = -1;
 
     /**
      * Client wall-collidability rule (v83 CVecCtrl::CollisionDetectFloat @0x9b36bc, field names from
      * the v95 PDB): a vertical wall is collision-tested only when its m_lZMass equals the map's
-     * m_nBaseZMass or the mover's current m_lZMass (the group of the foothold last stood on —
+     * m_nBaseZMass or the mover's current m_lZMass (the group of the foothold last stood on â€”
      * CVecCtrl::OnAttachedObjectChanged). Walls of unrelated structures are invisible, which is why
      * a floor mover passes 600020100's x=-1315 tower wall both walking and airborne (live-verified).
      * Walls with no parsed group (synthetic test maps) collide for everyone.
@@ -2738,7 +2793,7 @@ final class BotPhysicsEngine {
      * Pre-filtered collision footholds per foothold tree. The airborne collision checks run
      * every physics tick of every simulation; before this index they recomputed the full
      * wall/from-below classification over ALL footholds per tick whenever the nav graph
-     * wasn't cached yet — which is exactly the case DURING graph building, making graphgen
+     * wasn't cached yet â€” which is exactly the case DURING graph building, making graphgen
      * ~50x slower than the math itself (Ellinia: 107s). Keyed by tree identity (weak), so
      * per-id synthetic test maps and instanced map copies can never poison each other.
      */
@@ -2760,7 +2815,7 @@ final class BotPhysicsEngine {
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     // Sentinel for trees that can't be indexed (Mockito tree/map stubs in tests return null
-    // foothold lists) — callers fall back to the original tree/map query so stubbed seams keep
+    // foothold lists) â€” callers fall back to the original tree/map query so stubbed seams keep
     // working exactly as before.
     private static final FootholdCollisionIndex UNINDEXABLE = new FootholdCollisionIndex(
             java.util.List.of(), java.util.List.of(), -1, 0, new Foothold[0][]);
@@ -2790,7 +2845,7 @@ final class BotPhysicsEngine {
             // Client truth (v95 PDB CWvsPhysicalSpace2D::Load @ v83 0xa44c7c): m_nBaseZMass is the
             // smallest zMass group value that has footholds in the map. Airborne wall collision
             // (CollisionDetectFloat) tests a wall only when its zMass equals the base group or the
-            // mover's current group — see wallCollidesForMover.
+            // mover's current group â€” see wallCollidesForMover.
             int baseZMass = -1;
             for (Foothold fh : all) {
                 if (fh.getZMass() >= 0 && (baseZMass < 0 || fh.getZMass() < baseZMass)) {
@@ -2839,7 +2894,7 @@ final class BotPhysicsEngine {
                     }
                     Foothold[] sorted = bucket.toArray(NO_FOOTHOLDS);
                     // Stable insertion sort with the tree's own comparator. Foothold.compareTo is a
-                    // NON-TRANSITIVE partial order — TimSort (List.sort/Collections.sort on 32+
+                    // NON-TRANSITIVE partial order â€” TimSort (List.sort/Collections.sort on 32+
                     // elements) throws "comparison method violates its general contract" on it.
                     // The tree's findBelow only ever sorted tiny per-query lists, which land in
                     // TimSort's exception-free binary-insertion path; mirror that here per bucket.
@@ -2876,7 +2931,7 @@ final class BotPhysicsEngine {
         }
         FootholdCollisionIndex index = collisionIndex(map);
         if (index == UNINDEXABLE) {
-            return map.getFootholds().findBelow(p); // stubbed tree — original query path
+            return map.getFootholds().findBelow(p); // stubbed tree â€” original query path
         }
         for (Foothold fh : index.groundBucketAt(p.x)) {
             if (fh.getX1() <= p.x && fh.getX2() >= p.x) {
@@ -2898,7 +2953,7 @@ final class BotPhysicsEngine {
             return null;
         }
         if (map.getFootholds() == null || collisionIndex(map) == UNINDEXABLE) {
-            return map.getPointBelow(initial); // stubbed map/tree — original query path
+            return map.getPointBelow(initial); // stubbed map/tree â€” original query path
         }
         Foothold fh = findBelowIndexed(map, initial);
         if (fh == null) {
@@ -2908,14 +2963,14 @@ final class BotPhysicsEngine {
         return new Point(initial.x, dropY);
     }
 
-    // cos(alpha)/cos(beta) depend only on the foothold's endpoints, not the query x — cache them
+    // cos(alpha)/cos(beta) depend only on the foothold's endpoints, not the query x â€” cache them
     // per foothold instead of recomputing atan/cos on every probe (graphgen + the airborne
     // integrator issue tens of millions of these). Footholds never override equals/hashCode, so
     // identity keying is correct; WeakHashMap mirrors the COLLISION_INDEX lifetime pattern above.
     private static final java.util.Map<Foothold, double[]> SLOPE_COS_CACHE =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
-    // Verbatim port of the foothold tree's slope interpolation — the trig chain reduces to
+    // Verbatim port of the foothold tree's slope interpolation â€” the trig chain reduces to
     // linear interpolation but is kept as-is so int truncation matches to the pixel.
     private static int slopeYAt(Foothold fh, int x) {
         double s4 = Math.abs(x - fh.getX1());
@@ -3078,11 +3133,11 @@ final class BotPhysicsEngine {
             }
         }
 
-        // Client landing rule (packet-verified at fs=1 AND fs=0.2 — logs/monitored-packets
+        // Client landing rule (packet-verified at fs=1 AND fs=0.2 â€” logs/monitored-packets
         // -elnath-tricky-jumps-spd100v2.log, "monitored-packets - 100speedjumpmovement.log"):
         // touchdown HALVES the horizontal velocity (125 -> 62, -104 -> -52, 26 -> 13, 9 -> 4);
         // the walk/glide regime then takes over from that seed. (Counter-strafe landings zero
-        // it outright — handled by the caller, which knows the input state.)
+        // it outright â€” handled by the caller, which knows the input state.)
         landingDeltaX *= 0.5;
 
         // Do NOT clamp to walk speed: a fast landing legitimately exceeds it. A flash-jump dash
@@ -3131,14 +3186,17 @@ final class BotPhysicsEngine {
                 remainingLandingGraceMs = Math.max(0L, remainingLandingGraceMs - cfg.TICK_MS);
             }
 
+            double previousX = physX, previousY = physY;
+            float previousVelocityY = velocityY;
             physX += stepX;
             physY += velocityY + 0.5f * gravity;
             velocityY = Math.min(velocityY + gravity, maxFall);
 
             int x = (int) Math.round(physX);
             int intY = (int) Math.round(physY);
-            AirCollision collision = resolveAirCollision(map, new Point((int) Math.round(physX - stepX), previousIntY),
-                    new Point(x, intY), moverZMass);
+            AirCollision collision = resolveAirStepCollision(map,
+                    new Point((int) Math.round(previousX), previousIntY), new Point(x, intY),
+                    previousX, previousY, previousVelocityY, stepX, moverZMass);
             Point contact = BotRopeGrabSweep.contact(current, new Point(x, intY), targetRope, collision.progress());
             if (contact != null) return new RopeGrabResult(new Point(targetRope.x(), contact.y), tick + 1);
             if (collision.type() == AirCollisionType.WALL) {
@@ -3161,7 +3219,7 @@ final class BotPhysicsEngine {
             }
 
             if (intY > floorY) {
-                return null; // fell past the map floor — no rope to grab below
+                return null; // fell past the map floor â€” no rope to grab below
             }
             previousIntY = intY;
         }
@@ -3210,7 +3268,7 @@ final class BotPhysicsEngine {
     }
 
     /** A rope/ladder the bot could cling to at this exact point, or null. A point on a rope legitimately
-     *  floats above the floor (you stand by climbing, not on a foothold) — so callers reasoning about
+     *  floats above the floor (you stand by climbing, not on a foothold) â€” so callers reasoning about
      *  "standable" must treat this as standable, not midair. */
     static Rope climbableAtPoint(MapleMap map, Point position) {
         if (map == null || position == null) {
@@ -3224,10 +3282,10 @@ final class BotPhysicsEngine {
         return null;
     }
 
-    /** A reachable climb point inside the (±dx,±dy) box around {@code center}, or null. Used to approach a
+    /** A reachable climb point inside the (Â±dx,Â±dy) box around {@code center}, or null. Used to approach a
      *  collision portal whose warp point floats BESIDE a rope (common WZ layout): the portal fires on
      *  hitbox overlap, and a rope threading that box is a reachable surface the bot can climb to the
-     *  portal's height — unlike the exact centre, which sits on no foothold. Returns the rope's x at the
+     *  portal's height â€” unlike the exact centre, which sits on no foothold. Returns the rope's x at the
      *  centre's height, clamped to the rope's climbable span. */
     static Point ropeApproachInBox(MapleMap map, Point center, int dx, int dy) {
         if (map == null || center == null) {
@@ -3244,7 +3302,7 @@ final class BotPhysicsEngine {
         return null;
     }
 
-    /** A reachable standable/climbable point inside the (±dx,±dy) box around {@code center}, or null —
+    /** A reachable standable/climbable point inside the (Â±dx,Â±dy) box around {@code center}, or null â€”
      *  the general form of {@link #ropeApproachInBox}. A collision portal fires on hitbox overlap, but its
      *  warp point can float onto no surface; pathfinding needs a real target inside the box. Prefers a rope
      *  (climb to height), else the nearest foothold platform whose surface the box overlaps (covers an
@@ -3290,6 +3348,12 @@ final class BotPhysicsEngine {
                                                int stepX,
                                                long landingGraceMs,
                                                FlashImpulse flashImpulse) {
+        return simulateLanding(map, from, initialVelY, stepX, landingGraceMs, flashImpulse, moverZMassAt(map, from));
+    }
+
+    private static JumpLanding simulateLanding(MapleMap map, Point from, float initialVelY,
+                                               int stepX, long landingGraceMs,
+                                               FlashImpulse flashImpulse, int moverZMass) {
         float velocityY = initialVelY;
         double physX = from.x;
         double physY = from.y;
@@ -3298,7 +3362,6 @@ final class BotPhysicsEngine {
         final float gravity = gravityPerTick();
         final float maxFall = maxFallPerTick();
         final int floorY = mapFloorY(map);
-        final int moverZMass = moverZMassAt(map, from);
         boolean flashInjected = false;
 
         for (int tick = 0; tick < FALL_SIM_TICK_CAP; tick++) {
@@ -3312,6 +3375,8 @@ final class BotPhysicsEngine {
                 velocityY = flashImpulse.velY();
             }
 
+            double previousX = physX, previousY = physY;
+            float previousVelocityY = velocityY;
             physX += stepX;
             physY += velocityY + 0.5f * gravity;
             velocityY = Math.min(velocityY + gravity, maxFall);
@@ -3320,7 +3385,8 @@ final class BotPhysicsEngine {
             int intY = (int) Math.round(physY);
             Point previousPoint = new Point((int) Math.round(physX - stepX), previousIntY);
             Point nextPoint = new Point(x, intY);
-            AirCollision collision = resolveAirCollision(map, previousPoint, nextPoint, moverZMass);
+            AirCollision collision = resolveAirStepCollision(map, previousPoint, nextPoint,
+                    previousX, previousY, previousVelocityY, stepX, moverZMass);
                 if (collision.type() == AirCollisionType.WALL) {
                 physX = collision.point().x;
                 physY = collision.point().y;
@@ -3342,7 +3408,7 @@ final class BotPhysicsEngine {
             }
 
             if (intY > floorY) {
-                return null; // fell past the map floor — no foothold exists below
+                return null; // fell past the map floor â€” no foothold exists below
             }
             previousIntY = intY;
         }

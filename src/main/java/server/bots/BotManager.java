@@ -965,6 +965,8 @@ public class BotManager {
     private void updateLod(BotEntry entry, Character bot) {
         BotEntry.Lod prev = entry.lod;
         boolean lod0Now = forcedLod0Maps.contains(bot.getMapId())
+                || BotMvpqRun.belongsTo(bot, entry.ownerCharId)
+                || BotGuildCompanions.belongsTo(bot, entry.ownerCharId)
                 || BotKpqRun.inInstance(bot)
                 || BotLpqRun.inInstance(bot)
                 || BotOpqRun.inInstance(bot)
@@ -1684,6 +1686,9 @@ public class BotManager {
             return false;
         }
 
+        var guildCrewEntry = getEntryByBotCharId(bot.getId());
+        if (guildCrewEntry != null && BotGuildCompanions.belongsTo(bot, guildCrewEntry.ownerCharId))
+            BotGuildCompanions.leaveGuild(bot);
         boolean removed = removeBotByCharId(bot.getId(), "disconnect/takeover cleanup");
         clearBotOnlyAutopotState(bot);
         return removed;
@@ -4298,6 +4303,12 @@ public class BotManager {
         if (handleDeadTick(entry, bot, owner)) {
             return;
         }
+        if (owner == null && BotMvpqRun.belongsTo(bot, ownerCharId)) {
+            groundAfterMapChange(entry, bot); BotMvpqRun.tick(entry, bot, runAiTick); return;
+        }
+        if (owner == null && BotGuildCompanions.belongsTo(bot, ownerCharId)) {
+            groundAfterMapChange(entry, bot); BotGuildCompanions.tick(entry, bot, runAiTick); return;
+        }
         if (owner == null && (BotZakumBattle.belongsTo(bot, ownerCharId) || BotCarnivalRun.belongsTo(bot, ownerCharId) || BotEllinRun.belongsTo(bot, ownerCharId) || BotMagatiaRun.belongsTo(bot, ownerCharId))) {
             groundAfterMapChange(entry, bot);
             if (BotCarnivalRun.belongsTo(bot, ownerCharId)) BotCarnivalRun.tick(entry, bot, runAiTick);
@@ -5431,7 +5442,7 @@ public class BotManager {
     private boolean handleOwnerOfflineOrDead(BotEntry entry, Character bot, Character owner, long nowMs, int ownerCharId) {
         // Registered expeditions own resurrection and ordinary NPC exits. The generic
         // five-minute owner-away town warp must not pull their crew out of the instance.
-        if (BotZakumBattle.inInstance(bot) && BotZakumBattle.belongsTo(bot, ownerCharId)
+        if (BotMvpqRun.belongsTo(bot, ownerCharId) || BotGuildCompanions.belongsTo(bot, ownerCharId) || BotZakumBattle.inInstance(bot) && BotZakumBattle.belongsTo(bot, ownerCharId)
                 || BotCarnivalRun.belongsTo(bot, ownerCharId) || BotEllinRun.belongsTo(bot, ownerCharId) || BotMagatiaRun.belongsTo(bot, ownerCharId)) {
             entry.ownerOfflineOrDeadSinceMs = 0;
             return false;
@@ -6406,6 +6417,9 @@ public class BotManager {
         if (eim == null || (bot.getMap() != null && bot.getMap().isCPQMap())) {
             return false;
         }
+        // GPQ's opened sacrifice gate explicitly permits ordinary death-popup
+        // revival without leaving the event. Do not wait for the boss party to die.
+        if (BotGuildCompanions.inInstance(bot) && eim.getIntProperty("canRevive") == 1) return false;
         int mapId = bot.getMapId();
         for (Character p : eim.getPlayers()) {
             if (p != null && p.getId() != bot.getId() && p.getHp() > 0 && p.getMapId() == mapId) {
@@ -6551,7 +6565,7 @@ public class BotManager {
         // crew must check due support actions at that same boundary, otherwise long
         // spells can repeatedly consume the ready tick between slower AI scans.
         if (!runAiTick && (BotZakumBattle.inInstance(bot) || BotCarnivalRun.inInstance(bot)
-                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot)) && entry.attackCooldownMs <= 0) {
+                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot) || BotGuildCompanions.inInstance(bot) || BotMvpqRun.inInstance(bot)) && entry.attackCooldownMs <= 0) {
             BotCombatManager.tickSupportHealing(entry, bot);
             BotCombatManager.tickBuffs(entry, bot);
         }

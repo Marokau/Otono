@@ -30,6 +30,18 @@ public final class BotLootEligibility {
             return false;
         }
 
+        if (BotMvpqRun.inInstance(bot) && BotMvpqRun.belongsTo(bot, entry.owner == null ? -1 : entry.owner.getId())) {
+            if (drop.getItemId() == BotMvpqRun.LETTER || bot.getMapId() == BotMvpqRun.BONUS) return false;
+            if (bot.getMapId() == BotMvpqRun.BOSS && !drop.isPlayerDrop()) return false;
+        }
+        // Dedicated GPQ work items are picked up only by the assigned stage driver.
+        // This also keeps placed offerings and the leader's Rubian off passive-loot lists.
+        if (BotGuildCompanions.inInstance(bot) && BotGuildCompanions.belongsTo(bot, entry.owner == null ? -1 : entry.owner.getId())) {
+            int id = drop.getItemId();
+            if (id == 1032033 || id >= 4001024 && id <= 4001037) return false;
+            if (bot.getMapId() == 990001000 || bot.getMapId() == 990001101) return false;
+            if (bot.getMapId() == 990000900 && !drop.isPlayerDrop()) return false;
+        }
         // Leave Lounge lift and On the Way Up route markers for the player.
         if ((bot.getMapId() == 920010700 || bot.getMapId() == 920010600) && BotOpqRun.inInstance(bot) && drop.getMeso() == 10 && drop.isPlayerDrop()) return false;
         int itemId = drop.getItemId();

@@ -10,6 +10,19 @@ public final class BotPqDropPolicy {
     private BotPqDropPolicy() {}
 
     public static boolean keepsForHandoff(MapleMap map, MapItem drop) {
+        if (map.getId() == BotMvpqRun.COURSE && drop.getItemId() == BotMvpqRun.LETTER) {
+            var event = map.getEventInstance();
+            if (event != null && !event.isEventCleared())
+                for (var member : event.getPlayers()) if (BotMvpqRun.assigned(member)) return true;
+        }
+        // GPQ offerings and earned stage items must survive a human pause.
+        if (map.getId() >= 990000000 && map.getId() <= 990001000
+                && (drop.getItemId() == 1032033 || drop.getItemId() >= 4001024 && drop.getItemId() <= 4001037)) {
+            var event = map.getEventInstance();
+            if (event != null && !event.isEventCleared())
+                for (var member : event.getPlayers())
+                    if (member.getClient() instanceof BotClient && BotGuildCompanions.inInstance(member)) return true;
+        }
         // Human and companion route markers stay until the MPQ attempt ends.
         int mapId = map.getId();
         if ((mapId >= 926100300 && mapId <= 926100304 || mapId >= 926110300 && mapId <= 926110304)

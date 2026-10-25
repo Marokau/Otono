@@ -951,6 +951,31 @@ class BotPhysicsEngineTest {
                 "deep gap with a real floor below is still legal — distance is not a refusal reason");
     }
 
+    @Test
+    void shouldResolveNearApexLandingsInBothBakedAndLivePhysicsWithoutExtraJumpHeight() {
+        for (int rise : new int[]{77, 78}) {
+            MapleMap map = twoFloorMap(rise);
+            int expectedY = rise == 77 ? -77 : 0;
+            for (int x : new int[]{-30, 0, 30}) {
+                for (int dx : new int[]{-6, 0, 6}) {
+                    Point from = new Point(x, 0);
+                    var baked = BotPhysicsEngine.simulateJumpLanding(map, from, dx);
+                    assertNotNull(baked);
+                    assertEquals(expectedY, baked.point().y, "baked rise=" + rise + " dx=" + dx);
+                    Character bot = mockBot(from, map);
+                    BotEntry entry = new BotEntry(bot, bot, null);
+                    BotPhysicsEngine.beginGroundJump(entry, bot, dx);
+                    entry.fixedAirArc = true;
+                    for (int tick = 0; tick < 30 && entry.inAir; tick++) {
+                        BotPhysicsEngine.stepAirborne(entry, bot);
+                    }
+                    assertFalse(entry.inAir);
+                    assertEquals(baked.point(), bot.getPosition(), "live and baked must agree");
+                }
+            }
+        }
+    }
+
     private static MapleMap twoFloorMap(int gapPx) {
         MapleMap map = new MapleMap(200000000, 0, 0, 200000000, 1.0f);
         server.maps.FootholdTree tree = new server.maps.FootholdTree(

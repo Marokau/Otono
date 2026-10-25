@@ -16,7 +16,8 @@ public class BotClient extends Client {
 
     @Override
     public void sendPacket(Packet packet) {
-        if (getPlayer() != null && (server.bots.BotZakumBattle.inInstance(getPlayer()) || server.bots.BotEllinRun.inInstance(getPlayer())))
+        server.bots.BotGuildStatues.observe(getPlayer(), packet);
+        if (getPlayer() != null && (server.bots.BotZakumBattle.inInstance(getPlayer()) || server.bots.BotEllinRun.inInstance(getPlayer()) || server.bots.BotGuildCompanions.inInstance(getPlayer()) || server.bots.BotMvpqRun.inInstance(getPlayer())))
             server.bots.BotMobAttackObserver.observe(getPlayer(), packet);
         if (getPlayer() != null && getPlayer().getMapId() == 922010800)
             server.bots.BotLpqPuzzle.observeEffect(getPlayer(), packet);

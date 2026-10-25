@@ -29,6 +29,33 @@ public final class BotPqCrewFactory {
         return createPlaceholder(name, firstJob, secondJob, 35, 221024500, 9300006, world, channel);
     }
 
+    static int createGuildPlaceholder(String name, Job target, int world, int channel) {
+        if (target == Job.BOWMAN)
+            return createPlaceholder(name, Job.BOWMAN, null, 25, BotGuildCompanions.RECRUIT, 9300028, world, channel);
+        Job second = Job.getById(target.getId() - 1);
+        int id = createLpqPlaceholder(name, second, world, channel);
+        var c = new BotClient(world, channel);
+        try {
+            var bot = Character.loadCharFromDB(id, c, true); c.setPlayer(bot); c.setAccID(bot.getAccountID());
+            var e = new BotEntry(bot, bot, null);
+            e.personality = BotPersonality.parse(BotConfigService.getInstance().load(id));
+            e.apAuto = true; e.kpq.recruiting = true;
+            var reference = server.life.LifeFactory.getMonster(9300028); // Ergoth, handbook/Mob.txt.
+            e.aspirationalMobLevel = reference.getLevel(); e.aspirationalMobAvoid = reference.getAvoidability();
+            if (target == Job.HERMIT) e.spVariant = "claw";
+            while (bot.getLevel() < 100) {
+                if (bot.getLevel() == 70) { bot.changeJob(target); BotBuildManager.handleJobAdvance(e, bot, second, target); }
+                bot.levelUp(false); BotBuildManager.autoAssignSp(e, bot);
+                BotBuildManager.maybeRecomputeAutonomousApBuild(e, bot); BotBuildManager.autoAssignAp(e, bot);
+            }
+            bot.saveCharToDB(true);
+            try (var db = DatabaseConnection.getConnection(); var q = db.prepareStatement("UPDATE characters SET map=?,spawnpoint=0 WHERE id=?")) {
+                q.setInt(1, BotGuildCompanions.RECRUIT); q.setInt(2, id); q.executeUpdate();
+            }
+            return id;
+        } catch (java.sql.SQLException failure) { throw new IllegalStateException("Could not prepare Guild PQ fixture", failure); }
+    }
+
     private static int createPlaceholder(String name, Job job, Job secondJob, int level,
                                          int spawnMap, int referenceMob, int world, int channel) {
         if (job != Job.WARRIOR && job != Job.MAGICIAN && job != Job.BOWMAN && job != Job.THIEF)

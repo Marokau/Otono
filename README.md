@@ -32,6 +32,8 @@ These activities passed my human-led client audits:
 | Orbis PQ | Entire PQ verified through restoring Minerva; bot support for the optional bonus jail rooms afterward is deferred |
 | Ludibrium Maze PQ | Verified |
 | Magatia AKA Romeo and Juliet PQ | Verified |
+| Sharenian Guild PQ | Human-client verified; companions can be vulnerable to Ergoth attacks. Latest protection changes await a repeat client boss audit |
+| MV's Lair PQ | Human-client verified |
 | Zakum | Verified with twelve participants: one human and eleven bots |
 
 Verification reflects the runs documented in this project, not a guarantee that every possible party composition or edge case has been tested. Horntail, Pink Bean, and other activities listed in the guide do not yet have the same dedicated, verified bot support.

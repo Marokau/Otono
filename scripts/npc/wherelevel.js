@@ -587,7 +587,7 @@ var tourParties = [
     ["Amoria PQ",40,255,6,6,670010100,9201048,"Complete the Amorian Challenge with six players. Follow Amos's entry requirements; marriage and couple composition can affect eligibility or rewards on this server."],
     ["Guild PQ",1,255,6,30,101030104,9040000,"Gather your guild at the Sharenian excavation entrance. Coordinate the puzzles, specialist roles and Ergoth battle. Guild and role requirements still apply."],
     ["Crimsonwood Keep PQ",90,255,6,30,610030020,9201113,"Register a multi-class expedition for Crimsonwood Keep's trials and bosses. Coordinate the class-specific objectives; follow the entrance NPC's expedition requirements."],
-    ["MV's Lair PQ",140,255,4,6,674030100,9220018,"Gather a high-level party to explore MV's Lair and its dangerous encounters. Follow the entrance NPC's stage instructions and ordinary reward path."],
+    ["MV's Lair PQ",140,255,4,6,674030100,9220018,"Talk to Charles to assemble a dedicated bot crew. Collect 15 Secret Letters, check with the upper-left guide, and gather at the tunnel before fighting MV. Boss loot moves on after ten seconds, followed by a ten-minute treasure room."],
     ["Horntail Trial PQ",120,255,6,6,240050000,2083001,"Complete the six-player Horntail trial through the cave's normal stages. This is separate from the Horntail expedition listed on the Expeditions page."],
     ["Boss Rush PQ",1,255,1,6,970030000,9000037,"Challenge the local Boss Rush sequence alone or with a party. Speak to the coordinator for the available challenge and its timer."],
     ["Cafe PQ",21,120,3,6,193000000,1052013,"Choose among the six Cafe PQ variants at this entrance. Defeat the assigned monsters, collect the requested coupons and let the leader turn them in."],
@@ -611,7 +611,7 @@ var tourExpeditions = [
     ["Papulatus",1,255,1,6,220080000,0,"Enter the Clocktower boss encounter through the normal portal with your party. Complete the required quest preparations and bring the summoning piece. The local event's broad level range does not bypass quest requirements."],
     ["Captain Latanica",1,255,1,6,541010060,0,"Enter through the Ghost Ship's normal boss portal with an eligible party. Follow the local quest and access requirements; this is an instanced boss battle rather than an expedition registration NPC."]
 ];
-var companionActivities = {"Kerning PQ":true,"Ludibrium PQ":true,"Carnival PQ":true,"Carnival PQ 2":true,"Ellin Forest PQ":true,"Orbis PQ":true,"Ludibrium Maze PQ":true,"Magatia PQ":true,"Zakum":true};
+var companionActivities = {"Kerning PQ":true,"Ludibrium PQ":true,"Carnival PQ":true,"Carnival PQ 2":true,"Ellin Forest PQ":true,"Orbis PQ":true,"Ludibrium Maze PQ":true,"Magatia PQ":true,"MV's Lair PQ":true,"Guild PQ":true,"Zakum":true};
 function chapterFor(level) {
     for (var i = 0; i < tourChapters.length; i++) if (level <= tourChapters[i][1]) return i;
     return tourChapters.length - 1;
@@ -679,7 +679,7 @@ function storyMenu(details) {
 function partyFolders() {
     page = "tourPartyFolders";
     show("#eParty Quests & Challenges#n\r\nChoose an activity for its summary and entrance teleport.\r\n\r\n#b" +
-        link(0,"Party Quests") + link(1,"Challenges") + link(2,"PVP PQs"));
+        link(0,"Party Quests") + "\r\n" + link(1,"Challenges") + "\r\n" + link(2,"PVP PQs"));
 }
 function activityCategory(name) {
     var pvp = {"Carnival PQ":true,"Carnival PQ 2":true,"Ariant Coliseum":true};

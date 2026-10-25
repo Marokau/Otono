@@ -24,9 +24,9 @@ Latest acceptance update: Zakum twelve-participant human-led audit, October 22, 
 | Monster Carnival 2 | 51-70 | [2042005](../scripts/npc/2042005.js), Java Carnival implementation | Yes; 4 vs 4, owner verified 2026-10-21 |
 | Lord Pirate | 55-100 | [2094000](../scripts/npc/2094000.js), PiratePQ | No |
 | Magatia / Romeo and Juliet | 71-85 | [2112003](../scripts/npc/2112003.js), [2112004](../scripts/npc/2112004.js), MagatiaPQ_A/Z | Yes; owner verified human-led completion and poison-fog tick damage, 2026-10-21 |
-| Sharenian Guild PQ | 1-255; special roles apply | [9040000](../scripts/npc/9040000.js), GuildQuest | No |
+| Sharenian Guild PQ | 1-255; special roles apply | [9040000](../scripts/npc/9040000.js), GuildQuest | Yes; two full bot-only clears through native rewards/exit, 2026-10-24; same-crew reuse/resupply verified; human-client accepted 2026-10-25, with Ergoth survivability caveat; latest protection changes await a repeat client boss audit |
 | Crimsonwood Keep PQ | 90-255 | [9201113](../scripts/npc/9201113.js), CWKPQ | No |
-| MV's Lair PQ | 140-255 | [9220018](../scripts/npc/9220018.js), TreasurePQ | No |
+| MV's Lair PQ | 140-255 | [9220018](../scripts/npc/9220018.js), TreasurePQ | Yes; mixed-class bot-only clear through real treasure pickups and normal exit, 2026-10-24; Beginner movement and human-led waiting tested; human-client verified 2026-10-25 |
 
 Level ranges are this fork's script values, not remembered official-server ranges.
 Carnival reference ranges are 2-4 per team on small fields and 3-6 on large fields;

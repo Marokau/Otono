@@ -33,7 +33,7 @@ public final class BotPqProvisioner {
         }
         var ii = ItemInformationProvider.getInstance();
         // These PQ fixtures use ordinary headgear rather than special boss/event rewards.
-        if (bot.getName().startsWith("OPq") || bot.getName().startsWith("LMPq") || bot.getName().startsWith("CPq2") || bot.getName().startsWith("MPq")) {
+        if (bot.getName().startsWith("OPq") || bot.getName().startsWith("LMPq") || bot.getName().startsWith("CPq2") || bot.getName().startsWith("MPq") || bot.getName().startsWith("GPq") || bot.getName().startsWith("MVPq")) {
             if (bot.getName().startsWith("OPq") && bot.getMeso() < 180) bot.gainMeso(180 - bot.getMeso(), false, true, false); // Sixteen ascent rows plus two Lounge lift rows.
             for (var type : List.of(InventoryType.EQUIPPED, InventoryType.EQUIP)) {
                 for (var item : new ArrayList<>(bot.getInventory(type).list())) {
@@ -51,7 +51,7 @@ public final class BotPqProvisioner {
              var rows = statement.executeQuery()) {
             while (rows.next()) {
                 int id = rows.getInt(1);
-                if ((bot.getName().startsWith("OPq") || bot.getName().startsWith("LMPq") || bot.getName().startsWith("CPq2") || bot.getName().startsWith("MPq")) && java.util.Set.of(1002357, 1002390, 1002430, 1002858, 1003016).contains(id)) continue;
+                if ((bot.getName().startsWith("OPq") || bot.getName().startsWith("LMPq") || bot.getName().startsWith("CPq2") || bot.getName().startsWith("MPq") || bot.getName().startsWith("GPq") || bot.getName().startsWith("MVPq")) && java.util.Set.of(1002357, 1002390, 1002430, 1002858, 1003016).contains(id)) continue;
                 if (ii.isCash(id) || ii.getEquipLevelReq(id) < 10 || ii.getEquipLevelReq(id) > bot.getLevel()) continue;
                 if (ii.getEquipById(id) instanceof Equip equip
                         && BotScrollManager.levelsUntilWearable(bot, ii, equip, 0) == 0) candidates.add(equip);

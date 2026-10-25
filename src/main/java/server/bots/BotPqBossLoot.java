@@ -35,7 +35,9 @@ public final class BotPqBossLoot {
             synchronized(ANNOUNCED) {
                 var said=ANNOUNCED.computeIfAbsent(event,ignored->new HashSet<>());
                 if(said.add(drop.getDropper().getObjectId()))
-                    BotPqChat.queue(entry,"The boss loot is yours! Take your time picking it up. Drop any gear you don't want if you'd like us to have it.",false);
+                    BotPqChat.queue(entry,BotMvpqRun.inInstance(bot) && bot.getMapId()==BotMvpqRun.BOSS
+                            ? "MV is down! The boss loot is yours. Pick it up before the automatic treasure-room warp in ten seconds."
+                            : "The boss loot is yours! Take your time picking it up. Drop any gear you don't want if you'd like us to have it.",false);
             }
         }
     }

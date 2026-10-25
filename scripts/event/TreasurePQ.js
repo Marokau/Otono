@@ -136,7 +136,8 @@ function respawnStages(eim) {
 
 function playerEntry(eim, player) {
     var map = eim.getMapInstance(entryMap);
-    player.changeMap(map, map.getPortal(0));
+    // Otono: the inherited central spawn is isolated for ordinary classes.
+    Java.type("server.partyquest.MvpqEntry").enterCourse(player, map);
 }
 
 function scheduledTimeout(eim) {

@@ -18,6 +18,6 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 function enter(pi) {
-    pi.warp(674030000, 0);
+    Java.type("server.partyquest.MvpqEntry").enterCourse(pi.getPlayer(), pi.getMap());
     return true;
 }

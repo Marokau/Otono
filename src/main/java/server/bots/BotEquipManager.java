@@ -552,6 +552,7 @@ class BotEquipManager {
             if (eslot == null || eslot == EquipSlot.PET_EQUIP) continue;
             short primary = (short) eslot.getPrimarySlot();
             if (primary == 0) continue;
+            if (BotGuildEquipment.keepsProtection(bot, primary) && item.getItemId() != BotGuildCompanions.EARRING) continue;
             if (primary == (short) -11
                     && !isWeaponCompatible(bot, ii.getWeaponType(equip.getItemId()), equip)) continue;
             if (ii.canWearEquipment(bot, equip, primary) || statOnlyBlocked(bot, ii, equip)) {
@@ -1187,6 +1188,7 @@ class BotEquipManager {
         full.put((short) -11, targetWeapon);
         boolean moved = false;
         for (Short slot : order) {
+            if (BotGuildEquipment.keepsProtection(bot, slot)) continue;
             Equip target = full.get(slot);
             Equip current = currentBySlot.get(slot);
             if (target == null) continue;

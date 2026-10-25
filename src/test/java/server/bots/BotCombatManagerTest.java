@@ -70,6 +70,27 @@ import tools.HexTool;
 
 class BotCombatManagerTest {
     @Test
+    void gpqLethalTraversalKeepsDarkSightAheadOfOtherBuffWork() {
+        Character bot = mock(Character.class);
+        var skill = mock(Skill.class);
+        var fx = mock(StatEffect.class);
+        when(bot.getBuffedStarttime(BuffStat.DARKSIGHT)).thenReturn(System.currentTimeMillis());
+        when(bot.getSkillLevel(skill)).thenReturn((byte)20);
+        when(skill.getEffect(20)).thenReturn(fx);
+        when(fx.getDuration()).thenReturn(200000);
+        BotEntry entry = new BotEntry(bot, bot, null);
+        entry.buffSkillIds.add(Assassin.HASTE);
+        try(var gpq=Mockito.mockStatic(BotGuildRun.class); var skills=Mockito.mockStatic(SkillFactory.class)) {
+            gpq.when(()->BotGuildRun.needsDarkSight(bot)).thenReturn(true);
+            skills.when(()->SkillFactory.getSkill(Rogue.DARK_SIGHT)).thenReturn(skill);
+            BotCombatManager.tickBuffs(entry,bot);
+            skills.verify(()->SkillFactory.getSkill(Assassin.HASTE),never());
+            assertEquals(0,entry.attackCooldownMs);
+            verify(bot,never()).getMap();
+        }
+    }
+
+    @Test
     void shouldMatchOpenStoryBasicAttackStanceIds() {
         BotAttackDataProvider provider = BotAttackDataProvider.getInstance();
         assertEquals(23, provider.getAttackStanceId("swingO1"));

@@ -728,3 +728,29 @@ movement and portal execution in charge. No graph authoring or physics changed.
 This path was identified by inspection; the original jump was not captured in a
 live pathlog, so do not claim a particular watchdog was proven to have fired.
 Regression: BotLpqRoomRecoveryTest. See kb_bot_lpq.md for current constraints.
+
+## Otono GPQ trousers: a sub-tick apex was missing from collision sweeps (2026-10-24)
+
+**Class:** shared airborne physics sampling, not a navigation executor tolerance.
+
+In map 990000611, an ordinary 100/100 jumper must climb from y=7 to y=-70. With 50ms ticks, initial vertical speed -27.75 and gravity 5, the true apex is -70.00625; sampled endpoints reach only -69.5, rounded to -69. A straight endpoint collision sweep misses the legal 77-pixel ledge. Live navigation therefore correctly reported no route using the old baked physics. Movement skills are forbidden here, so a Teleport/Flash Jump exception would have bypassed the course.
+
+**Correction:** `BotPhysicsEngine.resolveAirStepCollision` sweeps the ascent and descent separately at the real ballistic apex and remaps collision progress to the original tick. Vertical tangent contact is allowed only at that actual airborne apex, preserving the usual forward-only takeoff protection. Live movement, baked landing prediction and rope-grab simulation share the helper. Jump impulse, gravity and arc endpoints are unchanged. Graph version **78** invalidates earlier graph/partition data.
+
+**Regression evidence:** the new physics test failed before the correction; afterward legal 77-pixel landings agree between live and baked movement for vertical/left/right launches while 78-pixel platforms remain unreachable. Both real-map graph reachability and complete movement-executor replay reach the trousers box from the normal entrance and the observed bottom-floor recovery position. Existing physics, graph-builder, planner, movement-lab and OPQ navigation suites passed. That was the offline checkpoint. Later on October 24, two complete normal-entry live runs verified clothing, sacrifice, Ergoth, real rewards and normal exit; a human-client audit remains pending.
+
+## Otono GPQ Teleport tower: cooldown approach creates a momentum fall (2026-10-24)
+
+At 140% speed/123% jump, the final spear tower has a vertical Teleport launch window x=1577..1578 at the edge of the y=-9 foothold (x=1520..1578). After a lower blink, the mage approached that window during the normal 490ms cast cooldown. Reaching the window with ground momentum and releasing the direction key was too late: the ordinary braking trajectory carried it off onto y=134. It blinked back up and repeated. An unbuffed profile could eventually escape, hiding the bug in earlier runs.
+
+The wrong layer was the cooldown executor intent, not graph geometry, Teleport range or physics. `selectTeleportCooldownWaypoint` now waits on the current platform before approaching a vertical cast during cooldown. The cast itself still passes the original strict launch-window and skill/MP gates when ready. Horizontal cooldown progress is preserved. No new graph data is authored and graph version remains 78.
+
+The real-map movement regression reproduced the fall before correction. The first attempt to hold only after entering the launch window still failed under real braking, so it was replaced with the earlier wait; the final full-stack regression and 44 planner tests passed. The clean live repeat reached the top and offered its spear in about twenty seconds.
+
+## Otono MVPQ: rope collision groups and premature airborne attachment (2026-10-24)
+
+Course 674030000 exposed two distinct layers. First, the ladder exit from (-852,-827) toward region 38 was authored with an unknown mover group. The live thief retained the previous ground's group and hit the wall instead. A rope region does not encode that arrival history, so baked rope-to-ground exits now require the same foothold landing for every relevant wall group as well as the unknown/base case. Graph version 79 rebuilds old data. BotRopeExitCache memoizes repeated (map, profile, x, y, step) samples within the build thread and clears at graph-build scope boundaries.
+
+Second, the ordinary lower jump from about (-1109,65) toward (-1212,5) was valid in isolated physics but looped in the complete executor. Near (-1155,-47), a coordinate snap found the OVERHEAD y=-55 ledge before actual landing. Navigation replaced the takeoff region/collision group and replanned a DROP from that other ledge, causing a wall hit and return. Authored fixed arcs now resolve as airborne until real landing; any airborne near-ground recovery probe preserves lastRegionId. Settled rope-bottom recovery remains available for non-authored motion. This executor fix changes no baked geometry and needs no additional graph version.
+
+BotMvpqMovementTest reproduces the invalid rope sample, compares baked/live ground-jump landings, rejects premature overhead attachment, and runs the complete lower-jump movement stack. The overhead and full-stack tests failed before the executor correction and passed afterward. Existing 44 navigation tests and the GPQ jump-course regressions also passed. The inherited isolated starting islands were a separate content defect. After explicit approval, native entry and pit reset now use the connected bottom-right ladder platform. A complete unbuffed Beginner replay reaches the guide; task-aware ordinary walking/falling uses the real pit reset if a search later lands on an isolated island. The crew opens reachable island boxes before choosing recovery.

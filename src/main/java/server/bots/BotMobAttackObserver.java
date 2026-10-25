@@ -20,7 +20,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-/** Headless client collision reports for observed Zakum and Poison Golem attacks. */
+/** Headless client collision reports for observed Zakum, Poison Golem, Ergoth, MV and spike-trap attacks. */
 public final class BotMobAttackObserver {
     record Attack(int type, Rectangle range, int start, int areaCount, int delay, int pad, boolean deadly, boolean magic) {}
     record Cast(MapleMap map, Monster mob, Attack attack, int index, int mask, Point origin, long due) {}
@@ -41,7 +41,9 @@ public final class BotMobAttackObserver {
         var object=bot.getMap().getMapObject(oid);
         if(!(object instanceof Monster mob)||mob.isFake())return;
         if(!(mob.getId()>=8800000&&mob.getId()<=8800010)
-                && !(mob.getId()>=9300180&&mob.getId()<=9300182&&BotEllinRun.inInstance(bot)))return;
+                && !(mob.getId()>=9300180&&mob.getId()<=9300182&&BotEllinRun.inInstance(bot))
+                && !(mob.getId()==9300028&&BotGuildCompanions.inInstance(bot))
+                && !((mob.getId()==9400589||mob.getId()==9400704||mob.getId()>=9400741&&mob.getId()<=9400748)&&BotMvpqRun.inInstance(bot)))return;
         int index=(action-24)/2;
         var attack=attack(mob.getId(),index);
         if(attack==null||attack.type!=0&&attack.type!=3)return;
@@ -57,7 +59,7 @@ public final class BotMobAttackObserver {
             var info=root==null?null:root.getChildByPath("attack"+(index+1)+"/info");
             if(info==null)return Optional.empty();
             // Ground-only tremors need their own airborne-avoidance rule, not a blanket area hit.
-            if(DataTool.getInt("jumpAttack",info,0)!=0)return Optional.empty();
+            if(DataTool.getInt("jumpAttack",info,0)!=0 && mobId!=9400589 && mobId!=9400748)return Optional.empty();
             var range=info.getChildByPath("range");
             if(range==null||range.getChildByPath("lt")==null||range.getChildByPath("rb")==null)return Optional.empty();
             Point lt=DataTool.getPoint("lt",range),rb=DataTool.getPoint("rb",range);
@@ -74,7 +76,7 @@ public final class BotMobAttackObserver {
         } else if(a.type==3) {
             // WZ columns have width rb.x-lt.x. Captured attack-option bits select columns;
             // the 0x0658 cast visibly used columns 3,4,6,9,10 in the body-one recording.
-            for(int i=0;i<Math.min(cast.mob.getId()==9300182?32:16,a.areaCount);i++)if((cast.mask&(1<<i))!=0) {
+            for(int i=0;i<Math.min(cast.mob.getId()==9300182||cast.mob.getId()==9300028?32:16,a.areaCount);i++)if((cast.mask&(1<<i))!=0) {
                 int x=cast.origin.x+(a.start+i)*a.range.width+a.range.width/2;
                 Point ground=cast.map.getPointBelow(new Point(x,cast.origin.y));
                 if(ground!=null) {var r=new Rectangle(a.range);r.translate(x,ground.y);result.add(r);}
@@ -87,11 +89,13 @@ public final class BotMobAttackObserver {
         BotPoisonMistDamage.tick(entry,bot,System.currentTimeMillis());
         Queue<Cast> queue; synchronized(PENDING){queue=PENDING.get(bot);}
         if(queue==null)return;
-        if(!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)){synchronized(PENDING){PENDING.remove(bot);}return;}
+        if(!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)&&!BotGuildCompanions.inInstance(bot)&&!BotMvpqRun.inInstance(bot)){synchronized(PENDING){PENDING.remove(bot);}return;}
         long now=System.currentTimeMillis();
         // Different attack delays need not be FIFO ordered.
         for(var cast:queue)if(now>=cast.due&&queue.remove(cast)) {
             if(cast.map!=bot.getMap()||!cast.mob.isAlive()||bot.getHp()<=0||entry.mobHitCooldownMs>0)continue;
+            // MV attack one is a ground-only quake (WZ jumpAttack=1).
+            if((cast.mob.getId()==9400589||cast.mob.getId()==9400748)&&cast.index==0&&(entry.inAir||entry.climbing))continue;
             Rectangle bounds=BotCombatManager.getBotTouchBounds(entry,bot);
             if(areas(cast).stream().noneMatch(r->r.intersects(bounds)))continue;
             int damage;

@@ -1288,7 +1288,11 @@ final class BotNavigationManager {
         int dx = edge.endPoint.x - edge.startPoint.x;
         int dy = edge.endPoint.y - edge.startPoint.y;
         if (Math.abs(dx) < Math.abs(dy)) {
-            return null;
+            // Wait on the current platform before approaching a vertical cast's
+            // launch window. Entering a tiny window during cooldown builds enough
+            // momentum to coast off its ledge even after releasing the direction key.
+            // The normal strict launch-window gate still applies once casting is ready.
+            return !entry.inAir && !entry.climbing ? new Point(botPos) : null;
         }
         int dir = Integer.signum(dx);
         if (dir == 0) {
@@ -1614,7 +1618,7 @@ final class BotNavigationManager {
         if (!hasTeleport(bot) && !hasFlashJump(bot)) {
             return false;
         }
-        if (!BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
+        if (!BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot) && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
             return false;
         }
         int maxMp = bot.getMaxMp();
@@ -3057,7 +3061,10 @@ final class BotNavigationManager {
         // the rope region. Returning -1 there gave an empty A* path and a grab/exit loop
         // (pathlog-rApIdScUrVy / live bot 1416, whose real route was a rope-free jump). Only blank the
         // region when the ground is genuinely far below; otherwise resolve to the platform underfoot.
-        if (entry.inAir && BotPhysicsEngine.isGroundFarBelow(map, botPos)) {
+        // An authored arc is airborne until physics actually lands it. Passing
+        // within the ground-snap band UNDER an overhead ledge must not replan
+        // from that ledge or replace the takeoff wall-collision group.
+        if (entry.inAir && (entry.fixedAirArc || BotPhysicsEngine.isGroundFarBelow(map, botPos))) {
             return -1;
         }
         int coordRegionId = graph.findRegionId(map, botPos);
@@ -3074,7 +3081,7 @@ final class BotNavigationManager {
                 coordRegionId = last;
             }
         }
-        if (coordRegionId >= 0) {
+        if (coordRegionId >= 0 && !entry.inAir) {
             entry.lastRegionId = coordRegionId;
         }
         return coordRegionId;

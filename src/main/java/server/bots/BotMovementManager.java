@@ -150,7 +150,7 @@ class BotMovementManager {
     }
 
     static JumpLanding simulateRopeJumpLanding(MapleMap map, Point from, int stepX, BotMovementProfile profile) {
-        return wrapLanding(BotPhysicsEngine.simulateRopeJumpLanding(map, from, stepX, profile));
+        return wrapLanding(BotRopeExitCache.landing(map, from, stepX, profile));
     }
 
     static boolean canReachRopeFromGround(MapleMap map, Point from, Rope rope) {

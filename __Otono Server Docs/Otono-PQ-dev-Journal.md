@@ -1572,3 +1572,149 @@ check. Horntail has no new companion implementation yet.
 The owner completed and accepted the final human-led Zakum client audit with eleven dedicated companions in two normal parties: twelve participants total. This closes the audit after iterative work on ordinary entry/retries and supplies; ranged arm-side/platform assignments and the 5 > 7 > 4 > 6 > 8 > 3 > 1 > 2 sequence; melee freedom to assist on reachable arms and wait when out of reach; rope/unsupported-step recovery; Hurricane's visible bow; hit ailments, stuns and knockback; and accurate phase announcements. The owner separately confirmed the Hurricane visual and whole-fight stun/knockback behavior during this audit.
 
 **Documentation closeout:** Marked the catalog and Zakum KB human verified and the larger-crew roadmap item Done. Historical pending notes remain as the record of what was known at each step. The deferred mage town-portal request remains deferred. This acceptance does not claim all attack templates have automated coverage or that future expeditions are implemented. No gameplay change, new live test, Git commit or publication was performed for this closeout.
+
+## 2026-10-24 - GPQ: a guild of our own, then Gatekeeper
+
+**Goal:** I wanted to choose GPQ without repeatedly organizing a guild or recruiting strangers. The answer is a persistent human-led guild with five temporary dedicated companions, rather than bypassing guild requirements.
+
+**Implemented:** Shuang explains the standard fee and six founders, then offers confirmed travel to Heracle. I choose the name and approve the normal creation process. The crew accepts normal confirmations, returns to camp, joins my guild through invitations and assembles a party. Dismissal removes the bot memberships and logs them off while my guild remains. Reassembly restocks and reuses eligible fixtures. A level-25 scout reserves the later low-level role; its stage and sacrifice are still pending.
+
+**Live discovery:** The first headless crew earned earrings and solved all three visible statue sequences, then four members died entering the hallway. The ordinary gear optimizer had swapped their mandatory Protector Rock earrings for stronger stat earrings. That hallway applies 30,000 HP drain without the required item. The fix preserves the earned earring in GPQ during both optimizer selection and application, without weakening the map hazard.
+
+**Verified:** Normal guild creation and fee, five invitations, real three-minute gathering, ordinary rock attacks/pickups, four/five/six-flash Gatekeeper rounds and normal NPC clear. After the failure, the normal death response ended the run. Dismissal left the master alone in the guild; the same five companions rejoined without another creation fee. A repeat run cleared Gatekeeper and all six survived the hallway wearing their earned earrings, including after a forced normal optimizer pass. The autonomous population was left alone.
+
+**Regression and cleanup:** 113 focused tests passed and the server package built successfully. Disconnecting the isolated test leader through normal client cleanup ended the repeat run; all five companions withdrew and logged off, leaving the master in the persistent guild. The server and its autonomous population remain running.
+
+**Still pending:** The rest of GPQ, including the low-level route, sacrifice, Ergoth and rewards. This is a verified first-stage milestone, not a completed or human-audited GPQ. MVPQ has not been started. Publication waits for a reviewed, ready update.
+
+## 2026-10-24 - GPQ: spear routes and visible offering clues
+
+**Live findings:** A jump-course worker aimed at a nearby decorative ledge and looped at a rope top instead of taking the real jumps to the spear rock. The GPQ reactor caller now targets the rock's supporting floor when it lies within ordinary attack reach; floating targets still use the existing ledge approach. The worker then reached and collected the spear through normal movement. The four altar assignments also reserve the specialist tower for the mage rather than asking the low-level scout to cross an unreachable gap.
+
+The thief repeatedly dropped and reclaimed the metal-door key before the ordinary five-second item-reactor timer consumed it. Shared GPQ item-offering actions now wait through that timer before resuming pickup or travel. Dedicated passive loot cannot reclaim stage offerings, and earned GPQ items remain available during an active run instead of expiring during a pause.
+
+**Offering puzzle:** The solver considers all 256 arrangements, filters them using the same correct/misplaced/unknown counts shown by the Guardian Statue and chooses the next test from those public clues. It does not inspect the hidden combination. Exhaustive decision-tree testing covers all combinations within the seven-check limit. Ordinary drops at the four vassals and the normal leader NPC check still determine success.
+
+**Status at this point:** Clothing routes, the normal earring sacrifice, Ergoth and timed bonus behavior have been implemented but still require live verification. One spear attempt ended before completion; its cause has not yet been established. The repeat records actual death and map transitions for diagnosis. This entry is not a full-clear claim.
+
+## 2026-10-24 - GPQ: the guarded spear belongs to the thief
+
+**Established cause:** Transition sampling captured the mage dying in the Dark Muscle Golem corridor with both HP and MP depleted. The mandatory earring was still equipped: this was real golem contact, not the earlier map-protection bug. The normal death response subsequently ended the failed run.
+
+**Correction:** The inner spear room is reachable with ordinary movement in this server's baked graph. The thief entered it through the unlocked door, climbed to the spear rock and returned through the real portals. The revised assignment keeps the mage outside the lethal corridor: the thief brings the earned spear back and drops it beside the mage, who handles its Teleport tower. Dark Sight now reserves the thief's support-action window in the corridor and is renewed before its expiry; unrelated support casts wait until the thief leaves. LPQ's existing Dark Sight policy is unchanged.
+
+**Verification so far:** Actual thief entry into map 990000431 and arrival at the spear platform were recorded. All three ordinary spears have been retrieved and placed through real jump courses. A fresh normal-entry run is now testing the complete corrected handoff and fourth tower; no resurrection or map-warp shortcut rescued the failed run.
+
+## 2026-10-24 - GPQ: the fourth spear, Haste escort and boss preparation
+
+**Verified live:** The thief retrieved the guarded spear and handed it to the mage outside the golem corridor. The mage reached and activated the fourth tower through normal Teleport movement. Together with the three jump-course offerings, the real spear gate reached state four and opened the next hallway. Initial fountain testing also produced the normal monster medals/scrolls and food/wine box drops.
+
+**Movement policy gap:** GPQ had been omitted from the existing PQ exemption to the autonomous bots' 500k-meso movement-skill reserve. A fully trained mage with full MP therefore refused Teleport. Adding GPQ to that same exemption retains skill possession, MP and map restrictions. The normal movement-skill eligibility regression covers GPQ, poor ordinary population bots, insufficient MP and maps that forbid the skill. The thief now accompanies a remaining physical jumper after handing over his spear so normal party Haste can support the route.
+
+**Boss preparation:** Ergoth's WZ attacks include 900ms magic casts (one with the deadly/1-HP flag) and a 2040ms magic-column cast with nineteen possible columns. GPQ now forwards these real casts into the existing client-attack observer, uses all nineteen mask bits, and reports intersecting hits through the player damage handler. Unit checks verify the metadata and packet-forwarding scope. This is implemented; a live Ergoth fight is still pending at this point.
+
+To give the level-100 crew legitimate survivability rather than damage immunity or inflated stats, the warrior slot is now a Dragon Knight with ordinary Hyper Body. The exploratory crew left through the normal exit NPC; four dedicated companions were reused with the new warrior. During the next gathering period, actual HP increases from Hyper Body were observed. The source and KB distinguish this current crew from the original Crusader test fixture.
+
+## 2026-10-24 - GPQ: the fountain clears, but a one-pixel jump blocks the trousers
+
+**Verified:** The normal fountain puzzle cleared in four checks using public correct/misplaced/unknown clues. A human-mode checkpoint confirmed that the crew waited for its leader to start the NPC puzzle. The first checkpoint's movement command failed to reach the statue's elevated origin; releasing that command and correcting the NPC approach let the ordinary interaction continue. No answer or stage-clear property was injected.
+
+Wine resting above the floor required a real jump before pickup. The GPQ collector now jumps into the existing pickup radius instead of trying forever from below. A regression checks that the distant item remains uncollected until the actor is actually close enough.
+
+**Clothing progress:** The mage recovered the shoes, the thief recovered the shirt, and the level-25 scout recovered the crown through its restricted room. The body accepted the shoes normally. The other pieces waited because the required next item, trousers, had not arrived.
+
+**Why the trousers worker could not finish:** Map 990000611 forbids movement skills. Its staircase includes an overlapping y=7 to y=-70 step: exactly 77 pixels. The shared 50ms jump simulation has a continuous apex of -70.00625 but samples only down to -69.5, rounded to -69. The collision sweep misses that ledge. Across 1,313 launch-position/direction combinations on the overlapping platforms, the current shared simulator produced no upper landings. Live navigation reproduced the same unreachable boundary.
+
+We did not warp the worker, grant the trousers, alter the stage state, boost the jump or enable a forbidden skill. The next task is a shared physics/collision regression and correction, followed by graph validation and another normal-entry GPQ run. Changing the shared movement foundation needs broader validation than a room-specific workaround.
+
+The test ended through normal disconnect/event cleanup; the five companions left the guild and logged off, while the guild remained. The dedicated Dragon Knight's temporary test naming mismatch was corrected offline to GPqSpear1. The autonomous population and server process were left running. Sacrifice, Ergoth and rewards remain implemented but **not live verified**. GPQ is still in development.
+
+## 2026-10-24 - GPQ: correcting the shared jump-apex sweep
+
+A focused regression reproduced the trousers failure before the fix: a legal 77-pixel upper platform was missed. The correction splits the collision sweep at the actual ballistic apex when a tick crosses it, rather than treating the whole tick as one straight segment. Both halves retain their real collision ordering/progress. The same helper serves ordinary live movement, baked landing predictions and rope-grab simulations. Jump height, gravity and movement-skill restrictions are unchanged.
+
+All 60 physics tests passed after the change, including vertical, left and right launches that must agree between live physics and baked predictions. The same test rejects a 78-pixel ledge. The rebuilt real GPQ trousers map now has an ordinary base-profile path from the entrance to the clothing box. Existing OPQ cloud, ascent, lounge and directional-drop navigation tests also passed. Graph version 78 invalidates the older baked data.
+
+This is an offline regression result, not a live Stage Four clear. The dedicated crew was dismissed normally. After validation, the server completed its normal saves/shutdown and restarted with the fix. A read-only runtime check confirmed graph version 78, ordinary trousers-route reachability, the population scheduler enabled and all dedicated test accounts offline. The next live run must exercise the rebuilt course, then the sacrifice, Ergoth, Rubian and bonus reward sequence.
+
+**Executor replay:** The complete course now passed from the normal entrance floor and from the actual fallen worker position, using the full movement stack. Broader checks passed: 60 physics, 47 graph-builder, 44 planner and 14 existing movement-lab tests, alongside the two GPQ course tests. These remain separate from the next live event audit.
+
+## 2026-10-24 - GPQ: the first complete journey through rewards
+
+**The crew crossed the finish line.** The native boss clear was recorded at 21:39:37 UTC. The leader picked up the Rubian, handed it to the knight and entered the thirty-second bonus room. Actual inventory changes confirmed weapon, scroll and potion rewards, and all six participants returned to the ordinary camp alive. Guild points grew from 170 to 1041 through the native stage and final NPC rewards. This was a bot-only gameplay test; a human client audit is still pending.
+
+**The low-level role worked:** the scout cleared its restricted clothing course, delivered the crown, then removed and offered its own earned earrings at the final gate. The ordinary map damage killed it; the normal reactor opened the gate and enabled revival. It revived in the quest's return map, earned a replacement pair and walked back through the cleared routes. We did not supply a sacrifice item or use a resurrection command.
+
+**A real boss casualty found another integration gap:** the thief died to Ergoth. Generic PQ handling told it to remain at the tomb while teammates were alive, even though GPQ's opened gate specifically permits normal revival. The GPQ-only correction respects that native flag and invokes the existing death-popup/return-map behavior. Before the sacrifice, and in other PQs, the old wait remains. The thief revived normally before the turn-in. This improves recovery; it does not make the crew invulnerable.
+
+**Healing/support parity:** GPQ was missing from the boss crews' action-ready support checks. It now allows the same due healing/rebuff evaluation between attacks, including idle stage support, with ordinary MP, skill, cost, disease and animation locks. The focused regression checks that an idle GPQ priest can reach the skill-cost gate and that ordinary population idle behavior remains unchanged.
+
+**The Teleport tower had a Haste-dependent trap:** a two-pixel cast window lay at a ledge's edge. While waiting for the next normal Teleport cooldown, the mage walked into that window, built momentum and coasted off even after releasing the movement key. The full-stack replay reproduced a fall from y=-9 to y=134. Merely targeting the current point after arrival was too late to brake. The final correction waits on the current platform before approaching a vertical Teleport window during cooldown. It retains horizontal cooldown travel, strict cast windows, natural ground braking and the normal cast interval. The corrected replay passes, and the clean live repeat subsequently reached the top and placed its spear in roughly twenty seconds.
+
+**Repeatability check underway:** all five companions were dismissed normally, withdrew from the guild and logged off. The existing guild retained its master and points. Reassembly selected the identical five character IDs, refreshed the carried supplies and entered through Shuang again without another guild-creation charge. The new run uses fresh puzzle patterns and all final gameplay fixes from the start.
+
+The final focused validation passed **308 tests**, with zero failures/errors/skips, across GPQ, support/combat, revival, movement, observer, loot protection and three-second cure handling. Earlier shared-physics and graph-builder suites also passed. The experimental GPQ work has not been pushed to GitHub.
+
+## 2026-10-24 - GPQ: the clean repeat reaches the finish line too
+
+The second run completed through the ordinary knight turn-in at **22:02:33 UTC** and returned to camp after the timed bonus at approximately **22:03:05 UTC**. All six were alive at exit. This run used the final gameplay corrections from the start, with fresh puzzle patterns and no mid-run code changes or intervention.
+
+Normal dismissal/reassembly reused the exact same five companion IDs, replenished supplies and retained the guild without another creation fee. Both the mage's Teleport tower and the warrior's trousers course completed normally on the repeat. The scout completed its restricted room and made the ordinary earring sacrifice again. Ergoth and every guard were defeated; the Rubian was picked up and returned through the normal NPC. The repeat's reward observer recorded 218 real item/meso drop objects, and actual inventory pickups were recorded. Guild points reached 1964 through native rewards.
+
+The test leader then disconnected normally. The five companions left the guild, saved and logged off, leaving the master and guild points intact. The server is online with the final fixes and unchanged population configuration. Player-facing assembly text now explains the complete normal entry flow instead of warning that later stages are unfinished. The implementation is **ready for a human client audit**, not yet human verified. Nothing has been published to GitHub from this development session.
+
+### 2026-10-24 - MVPQ starts with real letters and exposes two movement mismatches
+
+We began MV's Lair with a dedicated six-person test party and the ordinary Charles entry. The mixed crew earned all 15 Secret Letters from real shuffled reactors and their native respawns, then dropped and delivered them to the leader. No letter grants or stage properties were used. Readiness uses the shared gear/AP/SP/supply routines and leaves the autonomous population alone.
+
+Several workers first selected boxes they could not reach. Claim selection now checks each character's actual graph and learned movement skills. A separate letter-delivery issue appeared when the required total included an uncollected reactor drop: workers stopped searching before retrieving it. They now continue collecting natural floor letters during handoff, while refusing to reclaim player-dropped delivery piles. A later live attempt gathered and delivered all 15 after that correction.
+
+A thief repeatedly jumped off a ladder into a wall although the baked rope edge promised a crossing. The graph had simulated the exit with an unknown collision group, while the real character retained the group from its last platform. Rope exits now require a consistent landing across relevant wall groups; graph version 79 invalidates stale edges. Scoped memoization avoids repeating identical launch-window simulations. The concrete blocked rope exit has a real-map regression.
+
+Another lower-platform jump succeeded in isolated physics but failed in the complete navigation loop. Near its apex, the bot passed just under an overhead platform; navigation prematurely treated it as attached there and changed the collision group, causing a wall collision. Two tests reproduced that failure before the fix. Authored jumps now retain their airborne/takeoff state until physical landing; both tests, the existing 44 navigation tests and the GPQ jump-course tests passed afterward.
+
+Simultaneous falls also exposed a native cached-JavaScript concurrency error at the reset portal. Each cached portal script now has an execution lock, with a separate cache lock for creation/reload. A two-thread regression verifies a script is never entered concurrently. Different portal scripts remain independent.
+
+The mixed crew still exposes a starting-area traversal limitation: Flash Jump has a route, but the currently available ordinary ground/Teleport paths do not leave that component. We did not hide this with a warp or alter the map. A separate Flash Jump-capable diagnostic party submitted the earned letters through the real guide and reached MV's room; further completion testing and human confirmation remain pending.
+
+### 2026-10-24 - MVPQ becomes accessible to ordinary classes and completes through treasure
+
+The inherited course spawn sat on isolated central islands. An ordinary ground character could not leave that component; Flash Jump could. I wanted to audit as a Beginner, so after discussing the geometry I approved using the connected bottom-right platform beside the existing ladders. Normal event entry and the actual fall-reset portal now share that one spawn definition. No letters, guide check, boss requirement or reward was skipped, and no client WZ edit is needed. A complete unbuffed Beginner movement replay reaches the guide using normal walking/jumps/ropes.
+
+The first broad escape intent was too eager: reaching an island box could trigger recovery before the box had been opened. Recovery now evaluates the current box, floor item, handoff or exit goal. It opens/picks up reachable work first and otherwise holds ordinary directional input until the real pit portal catches the fall. A bounded-motion regression proves this is walking/falling, and another ensures a reachable island box is not preempted. The subsequent live course completed again with the mixed crew.
+
+A full bot-only mixed-party run earned and delivered 15 letters, submitted them at the real guide, gathered and broke the actual summoning rock, defeated MV, reached the native treasure room, collected four actual chest drops and returned through the normal exit. All six survived. The initial all-thief diagnostic had also cleared MV and collected real treasure, but suffered deaths and eventually used the ordinary death-popup return; it is separate diagnostic evidence.
+
+One fixture lesson matters for honest reporting: the test leader spawned as a Beginner but generic ownerless job logic advanced it; a later inspection found an I/L Archmage. That full clear is therefore recorded as a mixed-party clear. Beginner navigation is independently verified by the complete skill-less/unbuffed replay, and the human-entry regression verifies that a real player's class and build are never modified. Future headless Beginner fixtures should select the existing permanentBeginner personality before being registered.
+
+The same six characters then re-entered normally. Ginger Ales returned to 200; learned-skill supplies replenished, including both rock types for the Bishop and Summoning Rocks for the thief. With a controlled leader idle in human-led mode, the five companions gathered and dropped all 15 letters. The pile remained intact for over 2.5 minutes while the leader held none and the guide remained uncleared. Normal close-range pickups and the real guide conversation advanced the stage. All five bots gathered beside the tunnel and stayed in the course for 15 seconds while the leader waited. They escort the letter holder and give a ready notice before the human enters.
+
+Finally, ordinary party leave returned the leader to Charles and left no companions online. Cancellation uses the native party/event paths, and departed/unregistered members no longer block the remaining native-eligible crew's gathering checks. The boss notice also warns about the native ten-second loot window rather than telling the player to take unlimited time. WhereLevel now identifies MVPQ's crew as available (and corrects GPQ's older availability flag). These are server-side/live fixture checks; the client audit remains for me to perform.
+
+### 2026-10-25 - MVPQ pit recovery stays quiet during the client audit
+
+During stage one, I found the repeated dead-end island/pit-reset explanation distracting. Removed that recovery announcement while preserving the ordinary movement and native pit reset. Stage objectives and useful progress guidance remain. Verified the announcement is absent from source and rebuilt the server; the human audit is still in progress.
+
+### 2026-10-25 - MVPQ passes the human-client audit
+
+I marked MVPQ human-client verified after playing through it. Stage one was enjoyable, and the unnecessary pit-reset announcement was removed during the audit. I questioned whether MV was knocking the bots back: live bonus-room diagnostics confirmed native attack detection, but the captured thief hit rolled a miss and did not prove successful-hit recoil. I then personally saw the Bishop get knocked back and accepted MVPQ as verified. No knockback gameplay change was needed for this confirmation. Temporary diagnostics were restored to the original observer. GPQ is next for a separate human audit.
+
+### 2026-10-25 - GPQ offering collection exposes a human-held supply gap
+
+During my human audit, I collected one medal while the bots held the other three. The offering driver counted only companion inventories and waited silently. Dropping it did not solve the shortage: native GPQ pickup rules allow only the dropper to retrieve player-dropped items, even though the companions approached it. The initial advice to drop it for them was incorrect. With my authorization and my character standing one pixel from the medal, normal pickup recovered it; a normal nearby trade, including the player interaction handler's item validation and both confirmations, transferred the single medal to the archer (three to four). No items were generated, pickup ownership was bypassed, or stage progress injected. The run was recovered, but automatic guidance for human-held offerings remains unresolved; this is not a completed gameplay-code fix.
+
+### 2026-10-25 - GPQ clothing notice names the grave explicitly
+
+During the human audit, I saw the clothing-ready notice while still in the waterways and could not find Sharen's Soul. The crew was correctly waiting in Sharen III's Grave, a separate map reached through the far-end door of a clothing room. Updated the notice to name both the grave and Sharen III's Soul and explain that route. Verified the native portal scripts lead there; no portal or movement rules changed. Meso markers were discussed but not added.
+
+### 2026-10-25 - Ergoth preparation and Dispel recovery after the human-run deaths
+
+During my GPQ audit, several companions died at Ergoth and began the normal return journey; the spearman survived. Live inspection after revival found roughly 198-200 Ginger Ales remaining, a Priest with 1,290 base maximum HP, ranged companions around 2,900-3,000 HP and no Hyper Body on those returning members. Ergoth has magic attacks and nearby guards can Dispel. These observations identify survival risks; they do not reconstruct every fatal hit or prove which attack killed each bot.
+
+The crew now gathers with the human at the throne-room entrance before its bots break the Rubian crystal. It checks that everyone is alive and present, both Hyper Body stats are active, and the mage has Magic Guard. Preparation is latched per event so the first bot walking toward the crystal does not strand the others in a gathering loop. In this encounter, missing learned Magic Guard or an in-range party member's missing Hyper Body takes priority over ordinary rebuff deadlines, including after Dispel. Casts still use the existing support pipeline, costs, cooldowns, animation locks, status restrictions and native skill hitboxes. Unprotected combatants regroup with the living spearman instead of continuing normal offense; he approaches allies who need his buff. No levels, HP, gear or invulnerability were granted, and the Priest was not changed to a Bishop.
+
+GPQ also checks both bound potion keys while alive. A regression passed Ergoth's real deadly attack through the shared player damage handler: HP and MP became one and the observer notified the ordinary potion controls of both losses. This verifies the recovery handoff, not a newly observed live deadly-attack survival. Four focused support tests cover gathering requirements, missing Magic Guard despite a future rebuff deadline, cast-cost/animation constraints, Hyper Body's real bounds and both potion-key checks. Relevant GPQ, combat, potion and observer regressions and the packaged build passed. The changes were applied live without a restart; the next human Ergoth attempt remains the survival acceptance test.
+
+### 2026-10-25 - GPQ accepted with a documented Ergoth caveat
+
+I accepted GPQ as human-client verified while explicitly noting that the companions are squishy against some Ergoth attacks. I did not have time for another boss audit after the gathering/protection/potion changes. The catalog, README and knowledge-base indexes now reflect that acceptance without presenting those last changes as repeat client-tested. MVPQ remains human-client verified. Release notes for `PQ bots for MVPQ and GPQ added.` preserve both statuses and the known offering-ownership and early-statue-start audit cases. Publication is a separate step through the clean publication checkout; preparing these notes does not push private development history.

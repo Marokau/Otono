@@ -34,7 +34,7 @@ portal puzzles still run in parallel. Client presentation is audited by the owne
 loading the code live does not establish completion of every human-led PQ.
 
 ## Cure reaction timing
-Owner policy: all PQ, boss and expedition bots wait at least three seconds before actively curing a newly observed curable ailment. Reuse BotPqCureDelay through BotLpqCures rather than adding instant All Cure paths. Natural expiry, legitimate prevention, and uncurable stun are distinct from active potion cures. Current MPQ, LPQ, OPQ, LMPQ, Ellin and Zakum controllers use the shared helper.
+Owner policy: all PQ, boss and expedition bots wait at least three seconds before actively curing a newly observed curable ailment. Reuse BotPqCureDelay through BotLpqCures rather than adding instant All Cure paths. Natural expiry, legitimate prevention, and uncurable stun are distinct from active potion cures. Current MPQ, LPQ, OPQ, LMPQ, Ellin, GPQ and Zakum controllers use the shared helper.
 
 
 ## Dedicated crews do not request player equipment (2026-10-22)

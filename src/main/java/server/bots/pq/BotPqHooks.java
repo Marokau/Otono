@@ -20,6 +20,8 @@ public final class BotPqHooks {
      */
     public static boolean tick(BotEntry entry, Character bot, Character owner, boolean runAiTick) {
         server.bots.BotPqBossLoot.tick(entry, bot);
+        if (server.bots.BotMvpqRun.tick(entry, bot, runAiTick)) return true;
+        if (server.bots.BotGuildCompanions.tick(entry, bot, runAiTick)) return true;
         if (server.bots.BotCarnivalRun.tick(entry, bot, runAiTick)) return true;
         if (server.bots.BotEllinRun.tick(entry, bot, runAiTick)) return true;
         if (BotKpqRun.tick(entry, bot, runAiTick)) return true;
@@ -43,7 +45,7 @@ public final class BotPqHooks {
         return bot.getMapId() == BotKpqRun.FIRST_MAP && entry.kpq.state == 3;
     }
 
-    /** True once the bot no longer needs coupons — suppress coupon loot. */
+    /** True once the bot no longer needs coupons â€” suppress coupon loot. */
     public static boolean shouldSkipCouponLoot(BotEntry entry) {
         return entry.kpq.state >= 4;
     }

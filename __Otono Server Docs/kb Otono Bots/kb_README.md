@@ -5,7 +5,7 @@ subsystem references, not task status, handoffs, or release checklists. Prefer t
 for broad combat/navigation workflows and open a KB entry only for the specific failure mode at hand.
 The only actionable backlog is [`../ROADMAP.md`](../Otono-Roadmap.md).
 
-Maintain entries as CURRENT TRUTH: when a fact changes, edit or replace the stale text in place —
+Maintain entries as CURRENT TRUTH: when a fact changes, edit or replace the stale text in place â€”
 never append dated "UPDATE:" blocks at the bottom that leave obsolete claims standing above them.
 Every line of an entry must be true as written; git history (keep commit hashes as provenance where
 useful) records how it evolved.
@@ -50,7 +50,7 @@ Do not copy a graph version from a KB note. The current value and full schema hi
   [`kb_bot_aoe_reposition_before_fire.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_aoe_reposition_before_fire.md): AoE selection.
 - [`kb_bot_ranged_spacing_weapons.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_ranged_spacing_weapons.md) and
   [`kb_bot_thief_claw_dagger_split.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_thief_claw_dagger_split.md): ranged/no-ammo behavior.
-- [`kb_bot_mage_cast_speed.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_mage_cast_speed.md): binary-proven — magic casts ignore
+- [`kb_bot_mage_cast_speed.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_mage_cast_speed.md): binary-proven â€” magic casts ignore
   wand/staff speed (always Normal(6) + Booster); mage weapon scoring is speed-blind.
 - [`kb_bot_quest_commitment_and_danger_targeting.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_quest_commitment_and_danger_targeting.md):
   quest and survival biases.
@@ -58,19 +58,21 @@ Do not copy a graph version from a KB note. The current value and full schema hi
   [`kb_bot_missing_class_sp_builds.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_missing_class_sp_builds.md), and
   [`kb_bot_passive_mp_hp_regen.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_passive_mp_hp_regen.md): skill/build/recovery facts.
 - [`kb_bot_alert_stance_emulation.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_alert_stance_emulation.md): alert presentation.
-- [`kb_bot_temple_of_time.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_temple_of_time.md): the quest-gated Temple of Time corridor —
+- [`kb_bot_temple_of_time.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_temple_of_time.md): the quest-gated Temple of Time corridor â€”
   the per-bot reachability overlay (`QUEST_GATED_ENTRANCES`/`unlockedTempleGates`) and the
   `BotTempleProgressionManager` questline driver (3500-3521).
 - [`kb_bot_zakum_prequest.md`](kb_bot_zakum_prequest.md): the Zakum prequest driver
-  (`BotZakumPrequestManager`) — 100200/100201 custom-quest mechanics, the solo Zakum PQ
+  (`BotZakumPrequestManager`) â€” 100200/100201 custom-quest mechanics, the solo Zakum PQ
   (7-key item-trigger Giant Chest), Breath of Lava, the gold-tooth grind, and the
   script-only quest-item sell guard shared with the Temple driver.
 - [`kb_bot_zakum_battle.md`](kb_bot_zakum_battle.md): dedicated Adobis crews, normal
   expedition/summoning paths, separated arm bounds, supplies and headless-test limits.
-- [`kb_bot_pq_supervised_run_stucks.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_pq_supervised_run_stucks.md): player-led PQ runs —
+- [`kb_bot_pq_supervised_run_stucks.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_pq_supervised_run_stucks.md): player-led PQ runs â€”
   map-change housekeeping must precede tick-consuming hooks (frozen-midair class) and follow must
-  not warp into an event instance the bot isn't registered in (door↔instance bounce class).
+  not warp into an event instance the bot isn't registered in (doorâ†”instance bounce class).
 - [`kb_bot_pq_guidance.md`](kb_bot_pq_guidance.md): stage introductions, human reading pauses and per-instance speech for the remaining dedicated crews.
+- [`kb_bot_gpq.md`](kb_bot_gpq.md): guild creation/crew membership, GPQ through puzzles, sacrifice, Ergoth, rewards and normal exit; human-client accepted with an Ergoth survivability caveat; latest protection changes not yet re-audited.
+- [`kb_bot_mvpq.md`](kb_bot_mvpq.md): normal entry, earned letters, Beginner-accessible traversal, hazards and human-led waiting; full bot-only clear through rewards/exit and human-client verified 2026-10-25.
 - [`kb_bot_kpq.md`](kb_bot_kpq.md): Kerning PQ gameplay entry and NPC paths, companion-only
   automation, question-table mismatch, leader/pass collection, and instance simulation limits.
 - [`kb_bot_lpq.md`](kb_bot_lpq.md): Ludibrium PQ script requirements, supplied guide differences,
@@ -97,12 +99,12 @@ Do not copy a graph version from a KB note. The current value and full schema hi
 - [`kb_bot_market_price_discovery.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_market_price_discovery.md): clearing-seeded consensus,
   hourly unsold/fast-sale pressure, and equilibrium damping.
 - [`kb_bot_market_shout_haggle.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_market_shout_haggle.md): `B>` criteria shouts and the S4
-  trade-chat haggle protocol — floor-priced criteria, spoken-position parsing, structural commitments.
-- [`kb_bot_market_stall_funnel.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_market_stall_funnel.md): trip→publish funnel losses —
+  trade-chat haggle protocol â€” floor-priced criteria, spoken-position parsing, structural commitments.
+- [`kb_bot_market_stall_funnel.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_market_stall_funnel.md): tripâ†’publish funnel losses â€”
   permit NX economics, placement geometry (spacing, multi-floor strips), restart seeding.
 - [`kb_bot_trade_dupe_loss_audit.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_trade_dupe_loss_audit.md): open-trade concurrency hazards.
 - [`kb_bot_market_event_time_tz.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_market_event_time_tz.md): read the tape's `at` TIMESTAMP via
-  `UNIX_TIMESTAMP` — `getTimestamp().getTime()` is skewed by the JVM-vs-MySQL timezone offset.
+  `UNIX_TIMESTAMP` â€” `getTimestamp().getTime()` is skewed by the JVM-vs-MySQL timezone offset.
 
 ## Population, social, and operations
 
@@ -114,7 +116,7 @@ Do not copy a graph version from a KB note. The current value and full schema hi
   the customized F8 bot inventory interface is lost.
 - [`kb_bot_player_party_social.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_player_party_social.md): real-player party safeguards.
 - [`kb_bot_chair_sit_and_shout_padding.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_chair_sit_and_shout_padding.md): idle chair sitting
-  (owned-via-gacha, sprite-size hog bias) and obnoxious `@@@` shout-bubble padding — the `obnoxiousness`
+  (owned-via-gacha, sprite-size hog bias) and obnoxious `@@@` shout-bubble padding â€” the `obnoxiousness`
   / `sitAppetite` personality traits and the stand-before-acting invariant.
 - [`kb_bot_self_owned_owner_assumptions.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_self_owned_owner_assumptions.md): ownership audit.
 - [`kb_bot_double_register_botpop_race.md`](../Archive%20NuTNNuT%20Docs/docs/bot/kb/kb_bot_double_register_botpop_race.md): population registry race.

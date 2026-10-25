@@ -66,9 +66,16 @@ public class PortalScriptManager extends AbstractScriptManager {
 
     public boolean executePortalScript(Portal portal, Client c) {
         try {
-            PortalScript script = getPortalScript(portal.getScriptName());
+            PortalScript script;
+            synchronized (scripts) {
+                script = getPortalScript(portal.getScriptName());
+            }
             if (script != null) {
-                return script.enter(new PortalPlayerInteraction(c, portal));
+                // A cached GraalJS context permits one entering thread at a time.
+                // Different scripts retain independent execution locks.
+                synchronized (script) {
+                    return script.enter(new PortalPlayerInteraction(c, portal));
+                }
             }
         } catch (Exception e) {
             log.warn("Portal script error in: {}", portal.getScriptName(), e);
@@ -77,6 +84,6 @@ public class PortalScriptManager extends AbstractScriptManager {
     }
 
     public void reloadPortalScripts() {
-        scripts.clear();
+        synchronized (scripts) { scripts.clear(); }
     }
 }

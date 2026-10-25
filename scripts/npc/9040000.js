@@ -72,9 +72,20 @@ function action(mode, type, selection) {
                 return;
             }
 
-            cm.sendSimple("#e#b<Guild Quest: Sharenian Ruins>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nThe path to Sharenian starts here. What would you like to do? #b\r\n#L0#Register your guild for Guild Quest#l\r\n#L1#Join your guild's Guild Quest#l\r\n#L2#I would like to hear more details.#l");
+            cm.sendSimple("#e#b<Guild Quest: Sharenian Ruins>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nThe path to Sharenian starts here. What would you like to do? #b\r\n#L0#Register your guild for Guild Quest#l\r\n#L1#Join your guild's Guild Quest#l\r\n#L2#I would like to hear more details.#l\r\n\r\n#k#eBotPQ Menu#n#b\r\n#L900#Assemble a GPQ bot crew.#l\r\n#L902#I do not have a guild. Help me create one.#l\r\n#L903#Explain the guild and crew requirements.#l\r\n#L901#Dismiss my GPQ bot crew.#l");
         } else if (status == 1) {
             sel = selection;
+            if (selection >= 900) {
+                var crew = Java.type("server.bots.BotGuildCompanions");
+                if (selection == 902 || selection == 900 && cm.getPlayer().getGuildId() <= 0) {
+                    sel = 902;
+                    cm.sendYesNo(crew.requirements() + "\r\n\r\nWould you like to travel to Heracle with five cofounder bots? Nothing is charged until you confirm creation with Heracle.");
+                    return;
+                }
+                cm.sendOk(selection == 900 ? crew.assemble(cm.getPlayer()) : selection == 901 ? crew.release(cm.getPlayer()) : crew.requirements());
+                cm.dispose();
+                return;
+            }
             if (selection == 0) {
                 if (!cm.isGuildLeader()) {
                     cm.sendOk("Your guild master/jr.master must talk to me to register the guild for the guild quest.");
@@ -119,7 +130,13 @@ function action(mode, type, selection) {
                 cm.dispose();
             }
         } else if (status == 2) {
+            if (sel == 902) {
+                if (mode == 1) cm.sendOk(Java.type("server.bots.BotGuildCompanions").prepareGuild(cm.getPlayer()));
+                cm.dispose(); return;
+            }
             if (sel == 0) {
+                var readiness = Java.type("server.bots.BotGuildEntry").checkReady(cm.getPlayer());
+                if (readiness != null) { cm.sendOk(readiness); cm.dispose(); return; }
                 var entry = em.addGuildToQueue(cm.getPlayer().getGuildId(), cm.getPlayer().getId());
                 if (entry > 0) {
                     cm.sendOk("Your guild has been registered successfully. A message will pop on your chat keeping your guild aware about the registration status.\r\n\r\nNow, #rimportant#k: as the leader of this instance, #ryou must already be present on this channel#k the right moment your guild is called for the strategy time. #bThe missubmission of this action will void#k your guild registration as a whole, and the next guild will be called immediately. Must be noted also that if you, leader of this instance, become absent from the end of the strategy time to any point on the duration of the instance, it will render the mission interrupted, and your guild will be moved out instantly, moving again the queue.");

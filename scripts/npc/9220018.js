@@ -57,8 +57,13 @@ function action(mode, type, selection) {
                 return;
             }
 
-            cm.sendSimple("#e#b<Party Quest: MV's Lair>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nYou can't go any further because of the extremely dangerous creatures lying ahead. Would you like to collaborate with party members to complete the quest? If so, please have your #bparty leader#k talk to me.#b\r\n#L0#I want to participate in the party quest.\r\n#L1#I would like to " + (cm.getPlayer().isRecvPartySearchInviteEnabled() ? "disable" : "enable") + " Party Search.\r\n#L2#I would like to hear more details.");
+            cm.sendSimple("#e#b<Party Quest: MV's Lair>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nYou can't go any further because of the extremely dangerous creatures lying ahead. Would you like to collaborate with party members to complete the quest? If so, please have your #bparty leader#k talk to me.#b\r\n#L0#I want to participate in the party quest.\r\n#L1#I would like to " + (cm.getPlayer().isRecvPartySearchInviteEnabled() ? "disable" : "enable") + " Party Search.\r\n#L2#I would like to hear more details.#l\r\n\r\n#k#eBotPQ Menu#n#b\r\n#L900#Assemble an MV's Lair bot crew.#l\r\n#L901#Dismiss my MV's Lair bot crew.#l");
         } else if (status == 1) {
+            if (selection == 900 || selection == 901) {
+                var crew = Java.type("server.bots.BotMvpqCompanions");
+                cm.sendOk(selection == 900 ? crew.assemble(cm.getPlayer()) : crew.release(cm.getPlayer()));
+                cm.dispose(); return;
+            }
             if (selection == 0) {
                 if (cm.getParty() == null) {
                     cm.sendOk("You can participate in the party quest only if you are in a party.");
@@ -67,6 +72,8 @@ function action(mode, type, selection) {
                     cm.sendOk("Your party leader must talk to me to start this party quest.");
                     cm.dispose();
                 } else {
+                    var preparation = Java.type("server.bots.BotMvpqCompanions").refresh(cm.getPlayer());
+                    if (preparation != null) { cm.sendOk(preparation); cm.dispose(); return; }
                     var eli = em.getEligibleParty(cm.getParty());
                     if (eli.size() > 0) {
                         if (!em.startInstance(cm.getParty(), cm.getPlayer().getMap(), 1)) {

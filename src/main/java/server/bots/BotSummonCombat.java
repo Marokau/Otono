@@ -52,7 +52,7 @@ final class BotSummonCombat {
     }
 
     static void tick(BotEntry entry, Character bot) {
-        if (!BotZakumBattle.inInstance(bot) || !bot.isAlive()) return;
+        if ((!BotZakumBattle.inInstance(bot) && !BotMvpqRun.inInstance(bot)) || !bot.isAlive()) return;
         long now = System.currentTimeMillis();
         // Summons continue independently while their owner is stunned or sealed.
         for (var summon : List.copyOf(bot.getSummonsValues())) {
