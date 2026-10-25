@@ -10,6 +10,11 @@ I am sharing this project so others can enjoy it, learn from the development not
 
 ## What Otono adds
 
+<img width="1604" height="926" alt="Zakum 1" src="https://github.com/user-attachments/assets/1807b59c-df8a-4782-b614-9d251456927f" />
+
+<img width="1596" height="926" alt="Where level pq menu" src="https://github.com/user-attachments/assets/8ae76c40-a4b2-4930-8822-fc0db8edfeae" />
+
+
 - **NPC-based bot crews:** supported entry NPCs have a **BotPQ Menu** for assembling and dismissing dedicated crews. The existing autonomous population continues separately.
 - **Guided party quests:** stage explanations, progress updates, puzzle help, and readiness notices help players learn as they go.
 - **Prepared companions:** activity-appropriate equipment, skills, stats, ammunition, and supplies make crews ready for their assigned content.
