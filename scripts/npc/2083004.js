@@ -41,6 +41,12 @@ function start() {
 }
 
 function action(mode, type, selection) {
+    if (mode > 0 && (selection == 900 || selection == 901)) {
+        const Crew = Java.type('server.bots.BotHorntailCompanions');
+        cm.sendOk(selection == 900 ? Crew.assemble(cm.getPlayer()) : Crew.release(cm.getPlayer()));
+        cm.dispose(); return;
+    }
+
 
     player = cm.getPlayer();
     expedition = cm.getExpedition(exped);
@@ -59,14 +65,14 @@ function action(mode, type, selection) {
                 cm.sendOk("You do not meet the criteria to battle " + expedBoss + "!");
                 cm.dispose();
             } else if (expedition == null) { //Start an expedition
-                cm.sendSimple("#e#b<Expedition: " + expedName + ">\r\n#k#n" + em.getProperty("party") + "\r\n\r\nWould you like to assemble a team to take on #r" + expedBoss + "#k?\r\n#b#L1#Lets get this going!#l\r\n\#L2#No, I think I'll wait a bit...#l");
+                otonoMenu("#e#b<Expedition: " + expedName + ">\r\n#k#n" + em.getProperty("party") + "\r\n\r\nWould you like to assemble a team to take on #r" + expedBoss + "#k?\r\n#b#L1#Lets get this going!#l\r\n\#L2#No, I think I'll wait a bit...#l");
                 status = 1;
             } else if (expedition.isLeader(player)) { //If you're the leader, manage the exped
                 if (expedition.isInProgress()) {
                     cm.sendOk("Your expedition is already in progress, for those who remain battling lets pray for those brave souls.");
                     cm.dispose();
                 } else {
-                    cm.sendSimple(list);
+                    otonoMenu(list);
                     status = 2;
                 }
             } else if (expedition.isRegistering()) { //If the expedition is registering
@@ -136,7 +142,7 @@ function action(mode, type, selection) {
                 for (var i = 1; i < size; i++) {
                     text += "\r\n#b#L" + (i + 1) + "#" + (i + 1) + ". " + expedMembers.get(i).getValue() + "#l\n";
                 }
-                cm.sendSimple(text);
+                otonoMenu(text);
                 status = 6;
             } else if (selection == 2) {
                 var min = exped.getMinSize();
@@ -182,9 +188,12 @@ function action(mode, type, selection) {
                 cm.sendOk("You have banned " + banned.getValue() + " from the expedition.");
                 cm.dispose();
             } else {
-                cm.sendSimple(list);
+                otonoMenu(list);
                 status = 2;
             }
         }
     }
+}
+function otonoMenu(text) {
+    cm.sendSimple(text + "\r\n\r\n#k#eBotPQ Menu#n\r\n#b#L900#Assemble my Horntail bot crew.#l\r\n#L901#Dismiss my Horntail bot crew.#l");
 }

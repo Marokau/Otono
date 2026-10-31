@@ -936,6 +936,7 @@ public class StatEffect {
 
     // primary: the player caster of the buff
     private boolean applyTo(Character applyfrom, Character applyto, boolean primary, Point pos, boolean useMaxRange, int affectedPlayers) {
+        if (isResurrection() && server.expeditions.PinkBeanLives.exhausted(applyto)) return false;
         if (skill && (sourceid == GM.HIDE || sourceid == SuperGM.HIDE)) {
             applyto.toggleHide(false);
             return true;

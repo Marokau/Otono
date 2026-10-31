@@ -52,17 +52,25 @@ final class BotSummonCombat {
     }
 
     static void tick(BotEntry entry, Character bot) {
-        if ((!BotZakumBattle.inInstance(bot) && !BotMvpqRun.inInstance(bot)) || !bot.isAlive()) return;
+        if ((!BotZakumBattle.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) || !bot.isAlive()) return;
         long now = System.currentTimeMillis();
         // Summons continue independently while their owner is stunned or sealed.
         for (var summon : List.copyOf(bot.getSummonsValues())) {
             int id = summon.getSkill();
             if (!supported(id)) continue;
+            if(!BotPinkBeanSummons.allowed(bot,id)){
+                bot.cancelEffect(SkillFactory.getSkill(id).getEffect(summon.getSkillLevel()),false,-1);
+                continue;
+            }
             follow(bot, summon);
             if (now < NEXT.getOrDefault(summon, 0L)) continue;
             var fx = SkillFactory.getSkill(id).getEffect(summon.getSkillLevel());
             Spec spec = spec(id);
             List<Monster> targets = targets(bot, summon, spec, fx);
+            if(!BotHorntailTactics.targets(bot,targets).containsAll(targets)){
+                bot.cancelEffect(SkillFactory.getSkill(id).getEffect(summon.getSkillLevel()),false,-1);
+                continue;
+            }
             if (targets.isEmpty()) continue;
             NEXT.put(summon, now + ATTACK_MS);
             var packet = new ByteBufOutPacket();
@@ -104,7 +112,7 @@ final class BotSummonCombat {
         boolean magic = summon.getSkill() == Bishop.BAHAMUT;
         var candidates = new ArrayList<Monster>();
         for (var mob : bot.getMap().getAllMonsters()) {
-            if (!BotZakumArmLanes.canTarget(bot,mob) || !mob.isAlive() || mob.isFake() || mob.isBuffed(magic ? MonsterStatus.MAGIC_IMMUNITY : MonsterStatus.WEAPON_IMMUNITY)) continue;
+            if (!BotHorntailTargets.allowed(bot,mob) || !BotZakumArmLanes.canTarget(bot,mob) || !mob.isAlive() || mob.isFake() || mob.isBuffed(magic ? MonsterStatus.MAGIC_IMMUNITY : MonsterStatus.WEAPON_IMMUNITY)) continue;
             Rectangle bounds = BotMobHitboxProvider.getInstance().getMobBounds(mob);
             if (bounds != null && reachable(spec, summon.getPosition(), bounds)) candidates.add(mob);
         }

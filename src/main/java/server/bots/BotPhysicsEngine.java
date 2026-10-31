@@ -2757,7 +2757,11 @@ final class BotPhysicsEngine {
         if (!hasUsableFootholdXBounds(map)) {
             return area.x;
         }
-        int footholdMinX = map.getFootholds().getMinDropX();
+        // Item-drop bounds start at zero even on maps entirely to its right.
+        // Collision bounds must use actual indexed ground, not that sentinel.
+        var index = collisionIndex(map);
+        int footholdMinX = index.groundBuckets().length > 0
+                ? index.bucketMinX() : map.getFootholds().getMinDropX();
         // Synthetic (absurdly large) bounds: tighten inward to the foothold extent.
         if (isSyntheticMapArea(area)) {
             return footholdMinX;
@@ -2773,7 +2777,14 @@ final class BotPhysicsEngine {
         if (!hasUsableFootholdXBounds(map)) {
             return area.x + area.width;
         }
+        var index = collisionIndex(map);
         int footholdMaxX = map.getFootholds().getMaxDropX();
+        if (index.groundBuckets().length > 0) {
+            footholdMaxX = Integer.MIN_VALUE;
+            for (var foothold : index.groundBuckets()[index.groundBuckets().length - 1]) {
+                footholdMaxX = Math.max(footholdMaxX, Math.max(foothold.getX1(), foothold.getX2()));
+            }
+        }
         if (isSyntheticMapArea(area)) {
             return footholdMaxX;
         }

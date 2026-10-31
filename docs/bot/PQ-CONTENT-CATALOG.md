@@ -34,8 +34,8 @@ the dedicated Carnival 1 and Carnival 2 implementations use four players per tea
 | Content | Entry evidence |
 | --- | --- |
 | Zakum | [Adobis](../../scripts/npc/2030013.js), ZakumBattle; dedicated bot crew exists |
-| Horntail | [2083004](../../scripts/npc/2083004.js), HorntailBattle; separate HorntailPQ trial via [2083001](../../scripts/npc/2083001.js) |
-| Pink Bean | [2141001](../../scripts/npc/2141001.js), PinkBeanBattle |
+| Horntail | [2083004](../../scripts/npc/2083004.js), HorntailBattle; separate HorntailPQ trial via [2083001](../../scripts/npc/2083001.js)  Dedicated level-180+ trial/raid crews. Human-client raid clear October 30: about 46 minutes on the main-body clock, no observed deaths. Native trial, human prerequisites, twelve-person parties, rewards and twelve-hour main-body timer retained. The upper-right-head projectile-height correction was installed after that head fell and awaits a live firing check |
+| Pink Bean | [2141001](../scripts/npc/2141001.js), PinkBeanBattle. Human-client clear verified October 31: native event recorded 59m53s, four aggregate participant deaths, 29 alive at clear. Twenty-nine bots (14 Night Lords, five each Bishops, Dark Knights and Bowmasters) accompanied the human leader. Native 60-minute timer retained. This establishes completion with minimal timer margin; the 50-minute reliability target has not been met. Earlier headless clears and known visual limitations are documented in the knowledge base. |
 | Balrog | [1061014](../../scripts/npc/1061014.js), BalrogBattle normal expedition |
 | Scarlion and Targa | [9270047](../../scripts/npc/9270047.js), ScargaBattle |
 | Showa boss encounter | [9120201](../../scripts/npc/9120201.js), ShowaBattle |

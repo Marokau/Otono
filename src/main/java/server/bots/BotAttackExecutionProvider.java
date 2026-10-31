@@ -515,7 +515,7 @@ final class BotAttackExecutionProvider {
     static SkillAttackTiming resolveSkillAttackTiming(Skill skill, String action, Character bot,
                                                       BasicAttackData fallbackAttackData) {
         if (skill != null && skill.getId() == constants.skills.Bowmaster.HURRICANE
-                && bot != null && BotZakumBattle.inInstance(bot)) {
+                && bot != null && (BotZakumBattle.inInstance(bot) || BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) {
             return new SkillAttackTiming(0, BotHurricane.SHOT_MS);
         }
         int fallbackHitDelayMs = fallbackAttackData != null ? fallbackAttackData.hitDelayMs() : defaultHitDelayMs(600);

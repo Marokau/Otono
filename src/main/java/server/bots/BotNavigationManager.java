@@ -486,7 +486,7 @@ final class BotNavigationManager {
                 .filter(fh -> !fh.isWall()).count();
         if (walkable < 100) return;
         WARMUP_NOTIFIED.computeIfAbsent(ownerId, k -> new ConcurrentHashMap<>()).put(mapId, now);
-        owner.dropMessage(5, bot.getName() + " is warming map navigation cache, using fallback movement...");
+        log.debug("Bot {} is warming map navigation cache for map {}, using fallback movement", bot.getName(), mapId);
     }
 
     private static BotNavigationGraph.Edge refreshPendingClimbExitEdge(BotNavigationGraph graph,
@@ -1618,7 +1618,7 @@ final class BotNavigationManager {
         if (!hasTeleport(bot) && !hasFlashJump(bot)) {
             return false;
         }
-        if (!BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot) && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
+        if (!BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || BotHorntailRun.inInstance(bot)) && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
             return false;
         }
         int maxMp = bot.getMaxMp();

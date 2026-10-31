@@ -34,7 +34,7 @@ var clearMap = 270050300;
 var minMapId = 270050100;
 var maxMapId = 270050300;
 
-var eventTime = 140;     // 140 minutes
+var eventTime = 60;     // Historical one-hour Pink Bean trial.
 
 const maxLobbies = 1;
 
@@ -90,6 +90,10 @@ function setEventRewards(eim) {
 }
 
 function afterSetup(eim) {
+    eim.setProperty("otonoAuditStarted", String(Java.type('java.lang.System').currentTimeMillis()));
+    auditRecord(eim, "START");
+    eim.schedule("auditSnapshot", 30000);
+    eim.dropMessage(5, "Pink Bean: Five lives per participant. On your fifth death, watch until this expedition clears or ends.");
     eim.dropMessage(5, "The first wave will start within 15 seconds, prepare yourselves.");
     eim.schedule("startWave", 15 * 1000);
 }
@@ -98,7 +102,8 @@ function setup(channel) {
     var eim = em.newInstance("PinkBean" + channel);
     eim.setProperty("canJoin", 1);
     eim.setProperty("defeatedBoss", 0);
-    eim.setProperty("fallenPlayers", 0);
+    eim.setProperty("fallenPlayers", 0); // Aggregate audit statistic, not an expedition-wide failure limit.
+    eim.setIntProperty("pinkDeathLimit", 5);
 
     eim.setProperty("stage", 1);
     eim.setProperty("channel", channel);
@@ -122,12 +127,14 @@ function setup(channel) {
 }
 
 function playerEntry(eim, player) {
+    if (eim.getProperty("pinkDeaths:" + player.getId()) == null) eim.setIntProperty("pinkDeaths:" + player.getId(), 0);
     eim.dropMessage(5, "[Expedition] " + player.getName() + " has entered the map.");
     var map = eim.getMapInstance(entryMap);
     player.changeMap(map, map.getPortal(0));
 }
 
 function scheduledTimeout(eim) {
+    auditRecord(eim, "TIMEOUT");
     end(eim);
 }
 
@@ -147,23 +154,35 @@ function changedMap(eim, player, mapid) {
 function changedLeader(eim, leader) {}
 
 function playerDead(eim, player) {
-    var count = eim.getIntProperty("fallenPlayers");
-    count = count + 1;
-
-    eim.setIntProperty("fallenPlayers", count);
-
-    if (count == 5) {
-        eim.dropMessage(5, "[Expedition] Too many players have fallen, Pink Bean is now deemed undefeatable; the expedition is over.");
-        end(eim);
-    } else if (count == 4) {
-        eim.dropMessage(5, "[Expedition] Pink Bean is growing stronger than ever, last stand mode everyone!");
-    } else if (count == 3) {
-        eim.dropMessage(5, "[Expedition] Casualty count is starting to get out of control. Battle with care.");
+    if (eim.isEventCleared()) return;
+    var key = "pinkDeaths:" + player.getId();
+    var count = pinkDeaths(eim, player) + 1;
+    eim.setIntProperty(key, count);
+    eim.setIntProperty("fallenPlayers", Math.max(0, eim.getIntProperty("fallenPlayers")) + 1);
+    if (count >= 5) {
+        eim.dropMessage(5, "[Expedition] " + player.getName() + " has fallen five times and must watch until this run ends.");
+    } else {
+        player.dropMessage(5, "Pink Bean: You have fallen " + count + " of five times. Recover normally and rejoin your expedition.");
     }
+    var members = eim.getPlayers();
+    for (var i = 0; i < members.size(); i++) {
+        if (pinkDeaths(eim, members.get(i)) < 5) return;
+    }
+    eim.dropMessage(5, "[Expedition] Every remaining participant has exhausted their lives. The expedition is over.");
+    end(eim);
 }
 
 function playerRevive(eim, player) {
+    if (!eim.isEventCleared() && pinkDeaths(eim, player) >= 5) {
+        player.dropMessage(5, "Pink Bean: Your five lives are exhausted. You can watch until the expedition clears or ends.");
+        return false;
+    }
     return true;
+}
+
+function pinkDeaths(eim, player) {
+    var value = eim.getProperty("pinkDeaths:" + player.getId());
+    return value == null ? 0 : parseInt(value, 10);
 }
 
 function monsterRevive(eim, mob) {
@@ -199,6 +218,7 @@ function playerExit(eim, player) {
 }
 
 function end(eim) {
+    auditRecord(eim, "END");
     var party = eim.getPlayers();
     for (var i = 0; i < party.size(); i++) {
         playerExit(eim, party.get(i));
@@ -211,6 +231,7 @@ function giveRandomEventReward(eim, player) {
 }
 
 function clearPQ(eim) {
+    auditRecord(eim, "CLEAR");
     eim.stopEventTimer();
     eim.setEventCleared();
 }
@@ -292,3 +313,12 @@ function allMonstersDead(eim) {}
 function cancelSchedule() {}
 
 function dispose(eim) {}
+
+// Read-only local audit: no client monitoring or combat control required.
+function auditRecord(eim, outcome) {
+    Java.type('server.bots.BotPinkBeanAudit').record(eim, outcome);
+}
+function auditSnapshot(eim) {
+    auditRecord(eim, "PROGRESS");
+    if (!eim.isEventCleared()) eim.schedule("auditSnapshot", 30000);
+}

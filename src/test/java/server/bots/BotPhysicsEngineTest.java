@@ -464,6 +464,26 @@ class BotPhysicsEngineTest {
     }
 
     @Test
+    void knockbackCannotEscapePositiveOrNegativeCoordinateMapsThroughZeroDropSentinel() throws Exception {
+        var collision = BotPhysicsEngine.class.getDeclaredMethod("mapSideBoundaryCollision", MapleMap.class, Point.class, Point.class);
+        collision.setAccessible(true);
+        for (int sign : new int[]{1, -1}) {
+            MapleMap map = createEmptyTestMap(999240060 + sign);
+            int left = sign > 0 ? 90 : -990, right = sign > 0 ? 990 : -90;
+            map.setMapLineBoundings(-355, 380, left, right);
+            map.getFootholds().insert(new Foothold(new Point(left, 260), new Point(right, 260), 1));
+            int wall = sign > 0 ? left : right;
+            var hit = collision.invoke(null, map,
+                    new Point(wall + sign * 10, -40), new Point(wall - sign * 20, -45));
+            var kind = hit.getClass().getDeclaredMethod("type");kind.setAccessible(true);
+            var point = hit.getClass().getDeclaredMethod("point");point.setAccessible(true);
+            assertEquals("WALL", kind.invoke(hit).toString());
+            assertEquals(wall, ((Point)point.invoke(hit)).x,
+                    "real map edge must stop recoil before the floor-less zero sentinel");
+        }
+    }
+
+    @Test
     void shouldKeepAirborneBotInsideMapSideBoundary() {
         Point start = new Point(376, 182);
         int stepX = BotPhysicsEngine.walkStep(elliniaWeaponStore());

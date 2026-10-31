@@ -257,7 +257,8 @@ class BotBuildManager {
         int levelDelta = Math.max(0, refLevel - bot.getLevel());
         // Dedicated PQ crews must reliably hit their assigned enemies, rather than merely
         // qualify for a more accurate future grind spot. Use the same accuracy inversion.
-        double targetHit = entry != null && (entry.kpq.recruiting || entry.kpq.humanLed)
+        boolean horntail = entry != null && BotHorntailRaidBuild.VARIANT.equals(entry.spVariant);
+        double targetHit = horntail ? 1.0 : entry != null && (entry.kpq.recruiting || entry.kpq.humanLed)
                 ? 0.90 : ACC_FLOOR_TARGET_HIT_PCT / 100.0;
         double accNeeded = refAvoid / (1.3 - 0.6 * targetHit) * ((levelDelta * 10 + 255) / 100.0);
         // accuracy = floor(totalDex*0.8 + totalLuk*0.5) + flat(equip/buff). Solve for the base DEX that
@@ -266,6 +267,9 @@ class BotBuildManager {
         int totalAcc = f.getTotalAccuracy(bot);
         int dexLukAcc = (int) Math.floor(bot.getTotalDex() * 0.8 + bot.getTotalLuk() * 0.5);
         int flatAcc = totalAcc - dexLukAcc;
+        // Raid readiness must survive the loss of temporary accuracy buffs (expiry/Dispel).
+        if (horntail && bot.getBuffedValue(client.BuffStat.ACC) != null)
+            flatAcc -= bot.getBuffedValue(client.BuffStat.ACC);
         double minTotalDex = (accNeeded - bot.getTotalLuk() * 0.5 - flatAcc) / 0.8;
         int gearDex = bot.getTotalDex() - bot.getDex();
         return Math.max(0, (int) Math.ceil(minTotalDex) - gearDex);
@@ -753,6 +757,10 @@ class BotBuildManager {
     private static final List<BuildStep> BEGINNER_BUILD = List.of(new BuildStep(Beginner.RECOVERY, 3));
 
     private static List<BuildStep> getBuildOrder(Job job, String variant) {
+        if (BotHorntailRaidBuild.VARIANT.equals(variant)) {
+            var raid = BotHorntailRaidBuild.order(job);
+            if (raid != null) return raid;
+        }
         if (job == Job.BEGINNER) {
             return BEGINNER_BUILD;
         }

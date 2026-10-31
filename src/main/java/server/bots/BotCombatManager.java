@@ -16,6 +16,7 @@ import constants.skills.Assassin;
 import constants.skills.Bandit;
 import constants.skills.BlazeWizard;
 import constants.skills.Bowmaster;
+import constants.skills.Bishop;
 import constants.skills.Buccaneer;
 import constants.skills.Cleric;
 import constants.skills.Corsair;
@@ -401,9 +402,13 @@ class BotCombatManager {
     static void tickMobDamage(BotEntry entry, Character bot, boolean runSweep) {
         if (entry.mobHitCooldownMs > 0) {
             entry.mobHitCooldownMs = BotMovementManager.tickDown(entry.mobHitCooldownMs);
+            if(BotHorntailRun.inInstance(bot)||BotPinkBeanRun.inInstance(bot))rememberMobTouchCheck(entry,bot,bot.getPosition());
             return;
         }
-        if (!runSweep) return;       // no contact sweep this tick: skip the statRlock HP read too
+        if (!runSweep) {
+            if(BotHorntailRun.inInstance(bot)||BotPinkBeanRun.inInstance(bot))rememberMobTouchCheck(entry,bot,bot.getPosition());
+            return; // no contact sweep this tick: skip the statRlock HP read too
+        }
         if (bot.getHp() <= 0) return;
 
         // Dark Sight suppresses physical contact hits in the client. Headless clients
@@ -417,7 +422,8 @@ class BotCombatManager {
         try {
             Rectangle botBounds = getBotTouchBounds(entry, bot); // computed once per sweep, not per mob
             for (Monster mob : bot.getMap().getAllMonsters()) {
-                if (!isHostileLivingMonster(mob) || (!BotCarnivalRun.canAttack(bot, mob) || !BotEllinRun.canAttack(bot, mob))) continue;
+                if (!isHostileLivingMonster(mob) || (!BotCarnivalRun.canAttack(bot, mob) || !BotEllinRun.canAttack(bot, mob)
+                        || (BotPinkBeanRun.inInstance(bot) ? !BotPinkBeanRun.boss(mob.getId()) && mob.getId()!=8820007 : !BotHorntailTargets.allowed(bot, mob)))) continue;
                 if (isMobTouchingBot(botBounds, mob)) {
                     applyMobHit(entry, bot, mob);
                     return;
@@ -500,6 +506,8 @@ class BotCombatManager {
                                     int damageFrom, int monsterId,
                                     int broadcastDirection, int knockbackAirVelX) {
         Config cc = BotCombatManager.cfg;
+        int pinkHpBefore=(BotPinkBeanRun.inInstance(bot)||BotHorntailRun.inInstance(bot))?bot.getHp():-1;
+        int pinkMpBefore=pinkHpBefore>=0?bot.getMp():0;
         Point botPos = bot.getPosition();
 
         if (dmg <= 0) {
@@ -524,9 +532,11 @@ class BotCombatManager {
                 hploss += mploss - curmp;
                 mploss = curmp;
             }
-            bot.addMPHPAndTriggerAutopot(-hploss, -mploss);
+            if (BotHorntailSeduce.canUsePotions(bot)) bot.addMPHPAndTriggerAutopot(-hploss, -mploss);
+            else bot.addMPHP(-hploss, -mploss);
         } else {
-            bot.addMPHPAndTriggerAutopot(-dmg, 0);
+            if (BotHorntailSeduce.canUsePotions(bot)) bot.addMPHPAndTriggerAutopot(-dmg, 0);
+            else bot.addMPHP(-dmg, 0);
         }
 
         bot.getMap().broadcastMessage(bot,
@@ -537,6 +547,7 @@ class BotCombatManager {
         markAlerted(entry);
 
         if (bot.getHp() <= 0) {
+            if(pinkHpBefore>=0)log.warn("{} fatal contact: bot={} source={} damage={} hpBefore={} mpBefore={} magicGuard={} pos={} seduced={} stunned={} previousTouchPos={}",BotHorntailRun.inInstance(bot)?"Horntail":"Pink Bean",bot.getName(),monsterId,dmg,pinkHpBefore,pinkMpBefore,magicGuard,botPos,bot.hasDisease(client.Disease.SEDUCE),bot.hasDisease(client.Disease.STUN),entry.lastMobTouchCheckPos);
             enterDeadState(entry, bot, true);
             return;
         }
@@ -710,6 +721,7 @@ class BotCombatManager {
         }
         // Dispel invalidates active protection independently of ordinary rebuff deadlines.
         Skill guildProtection = BotGuildBossSupport.criticalSkill(bot);
+        if (guildProtection == null) guildProtection = BotHorntailSupport.criticalSkill(bot);
         if (guildProtection != null && !entry.inAir && !entry.climbing
                 && !bot.skillIsCooling(guildProtection.getId())) {
             castSupportSkill(entry, bot, guildProtection,
@@ -733,7 +745,7 @@ class BotCombatManager {
             if (level > 0) castSupportSkill(entry, bot, skill, skill.getEffect(level), System.currentTimeMillis());
             return;
         }
-        if (!entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) {
+        if (!entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) {
             noteSkillBuffDecision(entry, "idle (not following or grinding)");
             return;
         }
@@ -751,9 +763,10 @@ class BotCombatManager {
         entry.lastSkillBuffScanMs = now;
         // Beholder's healing/buff schedules are server-owned. Unlike attacking summons,
         // it needs no headless SUMMON_ATTACK simulation after the ordinary cast.
-        if ((BotZakumBattle.inInstance(bot) || BotMvpqRun.inInstance(bot)) && BotSummonCombat.canCast(entry, bot, now)) {
+        if ((BotZakumBattle.inInstance(bot) || (BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) && BotSummonCombat.canCast(entry, bot, now)) {
             for (int id : entry.summonSkillIds) {
                 if (id != DarkKnight.BEHOLDER && !BotSummonCombat.supported(id)) continue;
+                if (!BotPinkBeanSummons.allowed(bot,id)) continue;
                 if (bot.hasActiveBuff(id) || now < entry.nextBuffAt.getOrDefault(id, 0L) || bot.skillIsCooling(id)) continue;
                 Skill skill = SkillFactory.getSkill(id);
                 if (castSupportSkill(entry, bot, skill, skill.getEffect(bot.getSkillLevel(skill)), now)) return;
@@ -770,7 +783,7 @@ class BotCombatManager {
         // which at worst lets a due, deadline-gated rebuff fire a beat early (harmless while grinding).
         // Orbis puzzle traversal needs normal party support (notably Haste) even
         // on an otherwise empty field. Keep ordinary population idle-map behavior.
-        if (bot.getMap().getSpawnedMonstersOnMap() == 0 && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) return;
+        if (bot.getMap().getSpawnedMonstersOnMap() == 0 && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) return;
 
         if (trySupportBuff(entry, bot, now)) {
             return;
@@ -939,10 +952,11 @@ class BotCombatManager {
      * the heal animation play (matches real player behaviour when Heal is pressed with no mob in range).
      */
     static boolean tickSupportHealing(BotEntry entry, Character bot) {
+        if (!BotPinkBeanRun.safeToHeal(bot)) return false;
         if (bot.hasDisease(client.Disease.STUN) || bot.hasDisease(client.Disease.SEAL)) return false;
         if (entry.attackCooldownMs > 0 || (entry.moveWindowMs > 0 && !entry.inAir)) return false;
         if (!entry.supportHealsEnabled) return false;
-        if (!entry.following && !entry.grinding && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !BotMvpqRun.inInstance(bot)) return false;
+        if (!entry.following && !entry.grinding && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) return false;
         if (entry.healSkillId == 0 || bot.skillIsCooling(entry.healSkillId)) return false;
 
         Skill skill = SkillFactory.getSkill(entry.healSkillId);
@@ -1069,7 +1083,7 @@ class BotCombatManager {
         int cap = fx.getMobCount();
         for (MapObject mo : objects) {
             Monster m = (Monster) mo;
-            if (m.isAlive() && BotCarnivalRun.canAttack(bot, m) && BotEllinRun.canAttack(bot, m) && m.getStats().isUndead()) {
+            if (m.isAlive() && BotCarnivalRun.canAttack(bot, m) && BotEllinRun.canAttack(bot, m) && BotHorntailTargets.allowed(bot, m) && m.getStats().isUndead()) {
                 undead.add(m);
                 if (undead.size() >= cap) break;
             }
@@ -1240,9 +1254,27 @@ class BotCombatManager {
     static AttackPlan planAttack(BotEntry entry, Character bot, Monster target) {
         long startedAt = BotPerformanceMonitor.start();
         try {
-            if (BotZakumBattle.inInstance(bot) && bot.getJob() == client.Job.NIGHTLORD
-                    && BotZakumCombat.isZakum(target.getId()) && bot.getSkillLevel(NightLord.TRIPLE_THROW) > 0)
+            if (BotHorntailTactics.targets(bot, List.of(target)).isEmpty()
+                    || BotPinkBeanRun.inInstance(bot)&&BotPinkBeanStrategy.targets(bot,List.of(target)).isEmpty()) return null;
+            if (bot.getJob() == client.Job.NIGHTLORD
+                    && (BotZakumBattle.inInstance(bot) && BotZakumCombat.isZakum(target.getId())
+                        || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)) && BotHorntailCombat.part(target.getId())) && bot.getSkillLevel(NightLord.TRIPLE_THROW) > 0)
                 return BotZakumArmLanes.filter(bot, planSkillAttack(entry, bot, target, NightLord.TRIPLE_THROW));
+            if (BotPinkBeanRun.inInstance(bot) && BotPinkBeanRun.boss(target.getId())) {
+                if (bot.getJob() == client.Job.BOWMASTER) {
+                    var hurricane=planSkillAttack(entry,bot,target,Bowmaster.HURRICANE);
+                    if(hurricane!=null)return hurricane;
+                    return BotPinkBeanOuterFire.required(bot)
+                            ?planSkillAttack(entry,bot,target,constants.skills.Ranger.ARROW_RAIN):null;
+                }
+                if (bot.getJob() == client.Job.BISHOP) return planSkillAttack(entry,bot,target,Bishop.ANGEL_RAY);
+                if(bot.getJob()==client.Job.DARKKNIGHT){
+                    var weapon=BotAttackExecutionProvider.getEquippedWeaponType(bot);
+                    int crusher=weapon==WeaponType.SPEAR_STAB||weapon==WeaponType.SPEAR_SWING
+                            ?DragonKnight.SPEAR_CRUSHER:DragonKnight.POLE_ARM_CRUSHER;
+                    if(bot.getSkillLevel(crusher)>0)return planSkillAttack(entry,bot,target,crusher);
+                }
+            }
             List<AttackPlan> candidates = new ArrayList<>(3);
 
             for (int skillId : cachedAttackSkillIds(entry)) {
@@ -1302,6 +1334,7 @@ class BotCombatManager {
         WeaponType weaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
         double best = 0.0;
         for (int skillId : cachedAttackSkillIds(entry)) {
+            if(BotPinkBeanRun.inInstance(bot)&&skillId==DragonKnight.SACRIFICE)continue;
             Skill skill = SkillFactory.getSkill(skillId);
             if (skill == null) {
                 continue;
@@ -1435,6 +1468,9 @@ class BotCombatManager {
     private static AttackPlan selectBestAttackPlan(BotEntry entry, Character bot, List<AttackPlan> candidates) {
         List<PlanScore> scores = new ArrayList<>(candidates.size());
         for (AttackPlan candidate : candidates) {
+            // Choose a narrower real attack instead of silently deleting collateral damage.
+            if(BotPinkBeanRun.inInstance(bot)&&!BotPinkBeanStrategy.targets(bot,candidate.targets).containsAll(candidate.targets))continue;
+            if(!BotHorntailTactics.targets(bot,candidate.targets).containsAll(candidate.targets))continue;
             scores.add(scoreAttackPlan(entry, bot, candidate));
         }
 
@@ -1601,7 +1637,7 @@ class BotCombatManager {
     }
 
     static boolean isTargetInAttackRange(AttackPlan attackPlan, Character bot, Monster target) {
-        if (attackPlan == null) {
+        if (attackPlan == null || !BotHorntailFiringPosition.allows(bot, bot.getPosition(), target)) {
             return false;
         }
         if (attackPlan.hasHitBox()) {
@@ -1644,6 +1680,10 @@ class BotCombatManager {
 
     static void attackMonster(BotEntry entry, Character bot, AttackPlan attackPlan) {
         attackPlan = BotZakumArmLanes.filter(bot, attackPlan);
+        if (attackPlan != null && (!BotHorntailTactics.targets(bot, attackPlan.targets).containsAll(attackPlan.targets)
+                || BotPinkBeanRun.inInstance(bot)&&!BotPinkBeanStrategy.targets(bot,attackPlan.targets).containsAll(attackPlan.targets))) return;
+        if (attackPlan != null) for (var target : attackPlan.targets)
+            if (!BotHorntailFiringPosition.allows(bot, bot.getPosition(), target)) return;
         if (attackPlan == null) {
             recordAttackExec(entry, null, null, "blocked:no-plan", 0, -1, -1, botMp(bot), botMp(bot));
             return;
@@ -1654,7 +1694,7 @@ class BotCombatManager {
         // tick ago). Firing at a corpse rolls damage, burns MP/ammo + cooldown, and broadcasts a hit that
         // lands on nothing â€” the "bot shoots but hits no mob" symptom. This is the last race-free read before
         // we commit, so re-check here and skip; the next tick replans against live mobs.
-        if (primary != null && (!primary.isAlive() || (!BotCarnivalRun.canAttack(bot, primary) || !BotEllinRun.canAttack(bot, primary)))) {
+        if (primary != null && (!primary.isAlive() || (!BotCarnivalRun.canAttack(bot, primary) || !BotEllinRun.canAttack(bot, primary) || !BotHorntailTargets.allowed(bot, primary)))) {
             recordAttackExec(entry, attackPlan, primary, "blocked:dead-target", 0,
                     primaryHp(primary), primaryHp(primary), botMp(bot), botMp(bot));
             return;
@@ -1724,7 +1764,11 @@ class BotCombatManager {
         BotKillCalibration.observeKills(entry, bot, preAliveTargets);
         int hpAfter = primaryHp(primary);
         int mpAfter = botMp(bot);
-        entry.attackCooldownMs = Math.max(entry.attackCooldownMs, attackPlan.cooldownMs);
+        // Held raid Hurricane owns its next-shot deadline; rounding a fresh 120ms
+        // action lock to 50ms ticks on every shot would silently slow it to 150ms.
+        boolean heldHurricane=attackPlan.skillId==Bowmaster.HURRICANE
+                &&(BotZakumBattle.inInstance(bot)||BotHorntailRun.inInstance(bot)||BotPinkBeanRun.inInstance(bot));
+        if(!heldHurricane)entry.attackCooldownMs = Math.max(entry.attackCooldownMs, attackPlan.cooldownMs);
         String result = hpBefore >= 0 && hpAfter == hpBefore && plannedDamage > 0 ? "sent:no-hp-change" : "sent";
         recordAttackExec(entry, attackPlan, primary, result, plannedDamage, hpBefore, hpAfter, mpBefore, mpAfter);
         rememberAttackFacing(entry, attackPlan.stance);
@@ -1840,9 +1884,11 @@ class BotCombatManager {
     }
 
     private static AttackPlan planSkillAttack(BotEntry entry, Character bot, Monster primaryTarget, int skillId) {
+        if(BotPinkBeanRun.inInstance(bot)&&skillId==DragonKnight.SACRIFICE)return null;
         // Dedicated Zakum Night Lords use Triple Throw on the boss; Avenger remains an add-clearing option.
         if (skillId == Hermit.AVENGER && bot.getJob() == client.Job.NIGHTLORD
-                && BotZakumBattle.inInstance(bot) && BotZakumCombat.isZakum(primaryTarget.getId())) return null;
+                && (BotZakumBattle.inInstance(bot) && BotZakumCombat.isZakum(primaryTarget.getId())
+                    || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)) && BotHorntailCombat.part(primaryTarget.getId()))) return null;
         if (skillId == 0 || bot.skillIsCooling(skillId)) {
             return null;
         }
@@ -1862,7 +1908,7 @@ class BotCombatManager {
         }
         // Boss crews carry a finite potion load and cannot shop inside the altar.
         // Repeated percentage-HP attacks (Dragon Roar) otherwise consume the whole supply.
-        if (BotZakumBattle.inInstance(bot) && effect.getHpRate() < 0) return null;
+        if ((BotZakumBattle.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) && effect.getHpRate() < 0) return null;
         // Combo finishers (Panic/Coma) are client-gated on holding at least one combo orb â€” a bot
         // must play the same rule. COMBO buff value = orbs + 1, so < 2 means no orb to consume.
         if (GameConstants.isFinisherSkill(skillId)) {
@@ -1913,10 +1959,10 @@ class BotCombatManager {
         }
 
         int attackCount = effectiveHitCount(effect) * shadowPartnerHitMultiplier(bot, route);
-        if (!BotAttackExecutionProvider.canUseRangedAttackRoute(route, weaponType, bot.getPosition(), primaryTarget.getPosition())) {
+        if (!BotAttackExecutionProvider.canUseRangedAttackRoute(route, weaponType, bot.getPosition(), BotPinkBeanTargets.aim(bot,primaryTarget))) {
             return null;
         }
-        boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
+        boolean facingLeft = BotPinkBeanTargets.aim(bot,primaryTarget).x < bot.getPosition().x;
         BotAttackExecutionProvider.BasicAttackData fallbackAttackData = buildBasicAttackData(bot, primaryTarget);
         BotAttackDataProvider.AttackAnimationSpec attackSpec = BotAttackDataProvider.getInstance().getBasicAttackSpec(weaponType);
         String fallbackAction = attackSpec.primaryAction();
@@ -2001,7 +2047,7 @@ class BotCombatManager {
     }
 
     private static Rectangle calculateSkillHitBox(StatEffect effect, Character bot, Monster primaryTarget, AttackRoute route, int skillId, String action) {
-        boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
+        boolean facingLeft = BotPinkBeanTargets.aim(bot,primaryTarget).x < bot.getPosition().x;
         if (effect.hasBoundingBox()) {
             Point anchor = isStrikePointAnchoredAoeSkill(skillId)
                     ? primaryTarget.getPosition()
@@ -2129,7 +2175,8 @@ class BotCombatManager {
     }
 
     private static List<Monster> collectTargetsInHitBox(Character bot, Monster primaryTarget, Rectangle hitBox, int maxTargets) {
-        if (!BotZakumArmLanes.canTarget(bot, primaryTarget) || !doesHitBoxIntersectMonster(hitBox, primaryTarget)) {
+        if (!BotHorntailFiringPosition.allows(bot, bot.getPosition(), primaryTarget)
+                || !BotZakumArmLanes.canTarget(bot, primaryTarget) || !doesHitBoxIntersectMonster(hitBox, primaryTarget)) {
             return List.of();
         }
 
@@ -2141,10 +2188,11 @@ class BotCombatManager {
 
         List<Monster> secondaryTargets = new ArrayList<>();
         for (Monster monster : bot.getMap().getAllMonsters()) {
-            if (!isHostileLivingMonster(monster) || (!BotCarnivalRun.canAttack(bot, monster) || !BotEllinRun.canAttack(bot, monster)) || monster.getObjectId() == primaryTarget.getObjectId()) {
+            if (!isHostileLivingMonster(monster) || (!BotCarnivalRun.canAttack(bot, monster) || !BotEllinRun.canAttack(bot, monster) || !BotHorntailTargets.allowed(bot, monster)) || monster.getObjectId() == primaryTarget.getObjectId()) {
                 continue;
             }
-            if (!BotZakumArmLanes.canTarget(bot, monster) || !doesHitBoxIntersectMonster(hitBox, monster)) {
+            if (!BotHorntailFiringPosition.allows(bot, bot.getPosition(), monster)
+                    || !BotZakumArmLanes.canTarget(bot, monster) || !doesHitBoxIntersectMonster(hitBox, monster)) {
                 continue;
             }
             secondaryTargets.add(monster);
@@ -2243,7 +2291,7 @@ class BotCombatManager {
     private static List<Monster> aliveMonstersInRange(Character bot, Point botPos, double rangeSq) {
         List<Monster> candidates = new ArrayList<>();
         for (Monster m : bot.getMap().getAllMonsters()) {
-            if (isHostileLivingMonster(m) && BotCarnivalRun.canAttack(bot, m) && BotEllinRun.canAttack(bot, m) && m.getPosition().distanceSq(botPos) <= rangeSq) {
+            if (isHostileLivingMonster(m) && BotCarnivalRun.canAttack(bot, m) && BotEllinRun.canAttack(bot, m) && BotHorntailTargets.allowed(bot, m) && m.getPosition().distanceSq(botPos) <= rangeSq) {
                 candidates.add(m);
             }
         }
@@ -2817,6 +2865,7 @@ class BotCombatManager {
             if (skillId == fireNowBest.skillId || bot.skillIsCooling(skillId)) {
                 continue;
             }
+            if(BotPinkBeanRun.inInstance(bot)&&skillId==DragonKnight.SACRIFICE)continue;
             Skill skill = SkillFactory.getSkill(skillId);
             if (skill == null) {
                 continue;
@@ -2830,7 +2879,7 @@ class BotCombatManager {
                     || !canUseAttackSkillWithWeapon(skillId, weaponType)) {
                 continue;
             }
-            if (BotZakumBattle.inInstance(bot) && effect.getHpRate() < 0) continue;
+            if ((BotZakumBattle.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) && effect.getHpRate() < 0) continue;
             AttackRoute route = BotAttackExecutionProvider.determineSkillRoute(bot, skillId);
             int ammoCost = Math.max(effect.getBulletCount(), effect.getBulletConsume())
                     * shadowPartnerHitMultiplier(bot, route);
@@ -3157,7 +3206,7 @@ class BotCombatManager {
         if (route != AttackRoute.RANGED && route != AttackRoute.CLOSE) {
             return true;
         }
-        boolean facingLeft = target.getPosition().x < bot.getPosition().x;
+        boolean facingLeft = BotPinkBeanTargets.aim(bot,target).x < bot.getPosition().x;
         Rectangle basicReach = basicWeaponReachRect(bot, facingLeft, route);
         return basicReach != null && doesHitBoxIntersectMonster(basicReach, target);
     }
@@ -3169,7 +3218,7 @@ class BotCombatManager {
         if (route != AttackRoute.RANGED && route != AttackRoute.CLOSE) {
             return fallback;
         }
-        boolean facingLeft = fallback.getPosition().x < bot.getPosition().x;
+        boolean facingLeft = BotPinkBeanTargets.aim(bot,fallback).x < bot.getPosition().x;
         Rectangle basicReach = basicWeaponReachRect(bot, facingLeft, route);
         if (basicReach == null) {
             return fallback;
@@ -3214,7 +3263,12 @@ class BotCombatManager {
         Monster closest = null;
         double closestDistSq = Double.MAX_VALUE;
         for (Monster m : bot.getMap().getAllMonsters()) {
-            if (!BotZakumArmLanes.canTarget(bot, m) || !isHostileLivingMonster(m) || (!BotCarnivalRun.canAttack(bot, m) || !BotEllinRun.canAttack(bot, m)) || !doesHitBoxIntersectMonster(hitBox, m)) {
+            // Horntail parts share one anchor; selecting the nearest anchor must
+            // not replace a valid shot with a deferred hand or an opposite-side part.
+            if (BotPinkBeanRun.inInstance(bot)&&BotPinkBeanStrategy.targets(bot,List.of(m)).isEmpty()
+                    || BotHorntailTactics.targets(bot, List.of(m)).isEmpty()
+                    || !BotHorntailFiringPosition.allows(bot, botPos, m)) continue;
+            if (!BotZakumArmLanes.canTarget(bot, m) || !isHostileLivingMonster(m) || (!BotCarnivalRun.canAttack(bot, m) || !BotEllinRun.canAttack(bot, m) || !BotHorntailTargets.allowed(bot, m)) || !doesHitBoxIntersectMonster(hitBox, m)) {
                 continue;
             }
             double distSq = m.getPosition().distanceSq(botPos);
@@ -3231,7 +3285,7 @@ class BotCombatManager {
         Monster closest = null;
         double closestDistSq = maxRangeSq;
         for (Monster m : bot.getMap().getAllMonsters()) {
-            if (!isHostileLivingMonster(m) || (!BotCarnivalRun.canAttack(bot, m) || !BotEllinRun.canAttack(bot, m))) {
+            if (!isHostileLivingMonster(m) || (!BotCarnivalRun.canAttack(bot, m) || !BotEllinRun.canAttack(bot, m) || !BotHorntailTargets.allowed(bot, m))) {
                 continue;
             }
             double distSq = m.getPosition().distanceSq(botPos);
@@ -3254,7 +3308,7 @@ class BotCombatManager {
     }
 
     private static BotAttackExecutionProvider.BasicAttackData buildBasicAttackData(Character bot, Monster primaryTarget) {
-        return BotAttackExecutionProvider.buildBasicAttackData(bot, primaryTarget.getPosition());
+        return BotAttackExecutionProvider.buildBasicAttackData(bot, BotPinkBeanTargets.aim(bot,primaryTarget));
     }
 
     private static void noteSkillBuffDecision(BotEntry entry, String summary) {
@@ -3497,25 +3551,7 @@ class BotCombatManager {
     }
 
     private static boolean dispatchSupportSpecialMove(Character bot, Skill skill, int skillLevel) {
-        Client client = bot.getClient();
-        if (client == null) {
-            return false;
-        }
-
-        byte[] packetBytes = buildSupportSpecialMovePacket(
-                bot,
-                skill.getId(),
-                skillLevel,
-                net.server.Server.getInstance().getCurrentTimestamp());
-        InPacket packet = new ByteBufInPacket(Unpooled.wrappedBuffer(packetBytes));
-        short packetId = packet.readShort();
-        PacketHandler handler = PacketProcessor.getProcessor(bot.getWorld(), client.getChannel()).getHandler(packetId);
-        if (handler == null || !handler.validateState(client)) {
-            return false;
-        }
-
-        handler.handlePacket(packet, client);
-        return true;
+        return BotSupportCast.dispatch(bot, skill, skillLevel);
     }
 
     private static boolean canUseSkill(Character bot, int skillId, int skillLevel) {

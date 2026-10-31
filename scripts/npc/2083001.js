@@ -40,6 +40,12 @@ function start() {
 }
 
 function action(mode, type, selection) {
+    if (mode > 0 && (selection == 900 || selection == 901)) {
+        const Crew = Java.type('server.bots.BotHorntailCompanions');
+        cm.sendOk(selection == 900 ? Crew.assemble(cm.getPlayer()) : Crew.release(cm.getPlayer()));
+        cm.dispose(); return;
+    }
+
     if (mode == -1) {
         cm.dispose();
     } else {
@@ -65,7 +71,7 @@ function action(mode, type, selection) {
                     return;
                 }
 
-                cm.sendSimple("#e#b<Party Quest: Horntail Trial Grounds>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nThis is the path to Horntail's lair. If you want to face him, you and your team shall be tested on the trial grounds ahead.#b\r\n#L0#Let us pass to the trial grounds.\r\n#L1#I would like to " + (cm.getPlayer().isRecvPartySearchInviteEnabled() ? "disable" : "enable") + " Party Search.\r\n#L2#I would like to hear more details.");
+                otonoMenu("#e#b<Party Quest: Horntail Trial Grounds>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nThis is the path to Horntail's lair. If you want to face him, you and your team shall be tested on the trial grounds ahead.#b\r\n#L0#Let us pass to the trial grounds.\r\n#L1#I would like to " + (cm.getPlayer().isRecvPartySearchInviteEnabled() ? "disable" : "enable") + " Party Search.\r\n#L2#I would like to hear more details.");
             } else if (status == 1) {
                 if (selection == 0) {
                     if (cm.getParty() == null) {
@@ -131,4 +137,7 @@ function action(mode, type, selection) {
             cm.dispose();
         }
     }
+}
+function otonoMenu(text) {
+    cm.sendSimple(text + "\r\n\r\n#k#eBotPQ Menu#n\r\n#b#L900#Assemble my Horntail bot crew.#l\r\n#L901#Dismiss my Horntail bot crew.#l");
 }

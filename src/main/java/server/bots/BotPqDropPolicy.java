@@ -10,6 +10,17 @@ public final class BotPqDropPolicy {
     private BotPqDropPolicy() {}
 
     public static boolean keepsForHandoff(MapleMap map, MapItem drop) {
+        if(map.getId()==BotPinkBeanRun.ARENA && drop.getItemId()==4001193){
+            var event=map.getEventInstance();
+            if(event!=null&&!event.isEventCleared())
+                for(var member:event.getPlayers())if(BotPinkBeanRun.crew(member)!=null)return true;
+        }
+
+        if (map.getId() >= 240050100 && map.getId() <= 240050310 && drop.getItemId() >= 4001087 && drop.getItemId() <= 4001093) {
+            var event = map.getEventInstance();
+            if (event != null && !event.isEventCleared())
+                for (var member : event.getPlayers()) if (BotHorntailRun.crew(member) != null) return true;
+        }
         if (map.getId() == BotMvpqRun.COURSE && drop.getItemId() == BotMvpqRun.LETTER) {
             var event = map.getEventInstance();
             if (event != null && !event.isEventCleared())

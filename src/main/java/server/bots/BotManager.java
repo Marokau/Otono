@@ -965,7 +965,7 @@ public class BotManager {
     private void updateLod(BotEntry entry, Character bot) {
         BotEntry.Lod prev = entry.lod;
         boolean lod0Now = forcedLod0Maps.contains(bot.getMapId())
-                || BotMvpqRun.belongsTo(bot, entry.ownerCharId)
+                || BotMvpqRun.belongsTo(bot, entry.ownerCharId) || (BotHorntailRun.belongsTo(bot, entry.ownerCharId) || BotPinkBeanRun.belongsTo(bot, entry.ownerCharId))
                 || BotGuildCompanions.belongsTo(bot, entry.ownerCharId)
                 || BotKpqRun.inInstance(bot)
                 || BotLpqRun.inInstance(bot)
@@ -4303,6 +4303,12 @@ public class BotManager {
         if (handleDeadTick(entry, bot, owner)) {
             return;
         }
+        if (owner == null && BotPinkBeanRun.belongsTo(bot, ownerCharId)) {
+            groundAfterMapChange(entry, bot); BotPinkBeanRun.tick(entry, bot, runAiTick); return;
+        }
+        if (owner == null && BotHorntailRun.belongsTo(bot, ownerCharId)) {
+            groundAfterMapChange(entry, bot); BotHorntailRun.tick(entry, bot, runAiTick); return;
+        }
         if (owner == null && BotMvpqRun.belongsTo(bot, ownerCharId)) {
             groundAfterMapChange(entry, bot); BotMvpqRun.tick(entry, bot, runAiTick); return;
         }
@@ -5442,7 +5448,7 @@ public class BotManager {
     private boolean handleOwnerOfflineOrDead(BotEntry entry, Character bot, Character owner, long nowMs, int ownerCharId) {
         // Registered expeditions own resurrection and ordinary NPC exits. The generic
         // five-minute owner-away town warp must not pull their crew out of the instance.
-        if (BotMvpqRun.belongsTo(bot, ownerCharId) || BotGuildCompanions.belongsTo(bot, ownerCharId) || BotZakumBattle.inInstance(bot) && BotZakumBattle.belongsTo(bot, ownerCharId)
+        if ((BotHorntailRun.belongsTo(bot, ownerCharId) || BotPinkBeanRun.belongsTo(bot, ownerCharId)) || BotMvpqRun.belongsTo(bot, ownerCharId) || BotGuildCompanions.belongsTo(bot, ownerCharId) || BotZakumBattle.inInstance(bot) && BotZakumBattle.belongsTo(bot, ownerCharId)
                 || BotCarnivalRun.belongsTo(bot, ownerCharId) || BotEllinRun.belongsTo(bot, ownerCharId) || BotMagatiaRun.belongsTo(bot, ownerCharId)) {
             entry.ownerOfflineOrDeadSinceMs = 0;
             return false;
@@ -6420,6 +6426,11 @@ public class BotManager {
         // GPQ's opened sacrifice gate explicitly permits ordinary death-popup
         // revival without leaving the event. Do not wait for the boss party to die.
         if (BotGuildCompanions.inInstance(bot) && eim.getIntProperty("canRevive") == 1) return false;
+        // Pink Bean's native death popup returns to its resurrection room, whose
+        // existing portal rejoins this event. Exhausted individual lives stay down.
+        if (BotPinkBeanRun.inInstance(bot) && bot.getMapId() == BotPinkBeanRun.ARENA
+                && bot.getMap().getReturnMapId() == 270050200)
+            return BotPinkBeanRecovery.waitForResurrection(bot, eim.getPlayers());
         int mapId = bot.getMapId();
         for (Character p : eim.getPlayers()) {
             if (p != null && p.getId() != bot.getId() && p.getHp() > 0 && p.getMapId() == mapId) {
@@ -6461,6 +6472,10 @@ public class BotManager {
             if (entry.deadUntil == 0) {
                 BotCombatManager.enterDeadState(entry, bot, false);
             }
+            return true;
+        }
+        if ((BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)) && bot.hasDisease(client.Disease.SEDUCE)) {
+            BotHorntailSeduce.tick(entry, bot);
             return true;
         }
         if (perf) t = System.nanoTime();
@@ -6565,7 +6580,7 @@ public class BotManager {
         // crew must check due support actions at that same boundary, otherwise long
         // spells can repeatedly consume the ready tick between slower AI scans.
         if (!runAiTick && (BotZakumBattle.inInstance(bot) || BotCarnivalRun.inInstance(bot)
-                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot) || BotGuildCompanions.inInstance(bot) || BotMvpqRun.inInstance(bot)) && entry.attackCooldownMs <= 0) {
+                || BotEllinRun.inInstance(bot) || BotMagatiaRun.inInstance(bot) || BotGuildCompanions.inInstance(bot) || BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) && entry.attackCooldownMs <= 0) {
             BotCombatManager.tickSupportHealing(entry, bot);
             BotCombatManager.tickBuffs(entry, bot);
         }

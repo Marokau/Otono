@@ -20,7 +20,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-/** Headless client collision reports for observed Zakum, Poison Golem, Ergoth, MV and spike-trap attacks. */
+/** Headless client collision reports for observed Zakum, Horntail, Poison Golem, Ergoth, MV and spike-trap attacks. */
 public final class BotMobAttackObserver {
     record Attack(int type, Rectangle range, int start, int areaCount, int delay, int pad, boolean deadly, boolean magic) {}
     record Cast(MapleMap map, Monster mob, Attack attack, int index, int mask, Point origin, long due) {}
@@ -35,22 +35,32 @@ public final class BotMobAttackObserver {
         var p=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         if(Short.toUnsignedInt(p.getShort())!=SendOpcode.MOVE_MONSTER.getValue())return;
         int oid=p.getInt();p.get();p.get();int action=Byte.toUnsignedInt(p.get());
+        if(action>=42&&action<=59&&BotPinkBeanRun.inInstance(bot)){
+            var object=bot.getMap().getMapObject(oid);
+            if(object instanceof Monster mob&&!mob.isFake()&&BotPinkBeanRun.boss(mob.getId()))
+                BotPinkBeanCounterWarning.observe(bot,mob,Byte.toUnsignedInt(p.get()),Byte.toUnsignedInt(p.get()));
+            return;
+        }
         if(action<24||action>41)return;
         int mask=p.getInt();
         var origin=new Point(p.getShort(),p.getShort());
         var object=bot.getMap().getMapObject(oid);
         if(!(object instanceof Monster mob)||mob.isFake())return;
-        if(!(mob.getId()>=8800000&&mob.getId()<=8800010)
+        if(!(BotPinkBeanRun.boss(mob.getId()) && BotPinkBeanRun.inInstance(bot))
+                && !(mob.getId()>=8800000&&mob.getId()<=8800010)
+                && !(mob.getId()>=8810000&&mob.getId()<=8810009&&(BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))
                 && !(mob.getId()>=9300180&&mob.getId()<=9300182&&BotEllinRun.inInstance(bot))
                 && !(mob.getId()==9300028&&BotGuildCompanions.inInstance(bot))
                 && !((mob.getId()==9400589||mob.getId()==9400704||mob.getId()>=9400741&&mob.getId()<=9400748)&&BotMvpqRun.inInstance(bot)))return;
         int index=(action-24)/2;
         var attack=attack(mob.getId(),index);
         if(attack==null||attack.type!=0&&attack.type!=3)return;
+        var cast=new Cast(bot.getMap(),mob,attack,index,mask,origin,System.currentTimeMillis()+attack.delay);
         synchronized(PENDING) {
-            PENDING.computeIfAbsent(bot,ignored->new ConcurrentLinkedQueue<>())
-                    .add(new Cast(bot.getMap(),mob,attack,index,mask,origin,System.currentTimeMillis()+attack.delay));
+            PENDING.computeIfAbsent(bot,ignored->new ConcurrentLinkedQueue<>()).add(cast);
         }
+        BotPinkBeanColumnWarning.observe(bot,cast);
+        BotPinkBeanBodyReturn.observe(bot,cast);
     }
 
     static Attack attack(int mobId,int index) {
@@ -59,7 +69,7 @@ public final class BotMobAttackObserver {
             var info=root==null?null:root.getChildByPath("attack"+(index+1)+"/info");
             if(info==null)return Optional.empty();
             // Ground-only tremors need their own airborne-avoidance rule, not a blanket area hit.
-            if(DataTool.getInt("jumpAttack",info,0)!=0 && mobId!=9400589 && mobId!=9400748)return Optional.empty();
+            if(DataTool.getInt("jumpAttack",info,0)!=0 && mobId!=9400589 && mobId!=9400748 && mobId!=8810008 && mobId!=8810009)return Optional.empty();
             var range=info.getChildByPath("range");
             if(range==null||range.getChildByPath("lt")==null||range.getChildByPath("rb")==null)return Optional.empty();
             Point lt=DataTool.getPoint("lt",range),rb=DataTool.getPoint("rb",range);
@@ -76,7 +86,7 @@ public final class BotMobAttackObserver {
         } else if(a.type==3) {
             // WZ columns have width rb.x-lt.x. Captured attack-option bits select columns;
             // the 0x0658 cast visibly used columns 3,4,6,9,10 in the body-one recording.
-            for(int i=0;i<Math.min(cast.mob.getId()==9300182||cast.mob.getId()==9300028?32:16,a.areaCount);i++)if((cast.mask&(1<<i))!=0) {
+            for(int i=0;i<Math.min(cast.mob.getId()==9300182||cast.mob.getId()==9300028||BotHorntailCombat.part(cast.mob.getId())?32:16,a.areaCount);i++)if((cast.mask&(1<<i))!=0) {
                 int x=cast.origin.x+(a.start+i)*a.range.width+a.range.width/2;
                 Point ground=cast.map.getPointBelow(new Point(x,cast.origin.y));
                 if(ground!=null) {var r=new Rectangle(a.range);r.translate(x,ground.y);result.add(r);}
@@ -89,13 +99,14 @@ public final class BotMobAttackObserver {
         BotPoisonMistDamage.tick(entry,bot,System.currentTimeMillis());
         Queue<Cast> queue; synchronized(PENDING){queue=PENDING.get(bot);}
         if(queue==null)return;
-        if(!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)&&!BotGuildCompanions.inInstance(bot)&&!BotMvpqRun.inInstance(bot)){synchronized(PENDING){PENDING.remove(bot);}return;}
+        if(!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)&&!BotGuildCompanions.inInstance(bot)&&!BotMvpqRun.inInstance(bot)&&!(BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))){synchronized(PENDING){PENDING.remove(bot);}return;}
         long now=System.currentTimeMillis();
         // Different attack delays need not be FIFO ordered.
         for(var cast:queue)if(now>=cast.due&&queue.remove(cast)) {
             if(cast.map!=bot.getMap()||!cast.mob.isAlive()||bot.getHp()<=0||entry.mobHitCooldownMs>0)continue;
             // MV attack one is a ground-only quake (WZ jumpAttack=1).
-            if((cast.mob.getId()==9400589||cast.mob.getId()==9400748)&&cast.index==0&&(entry.inAir||entry.climbing))continue;
+            if(((cast.mob.getId()==9400589||cast.mob.getId()==9400748)&&cast.index==0
+                    ||cast.mob.getId()==8810008||cast.mob.getId()==8810009)&&(entry.inAir||entry.climbing))continue;
             Rectangle bounds=BotCombatManager.getBotTouchBounds(entry,bot);
             if(areas(cast).stream().noneMatch(r->r.intersects(bounds)))continue;
             int damage;
@@ -113,14 +124,20 @@ public final class BotMobAttackObserver {
 
     static void report(BotEntry entry,Character bot,Monster mob,int index,int damage) {
         int oldHp=bot.getHp(),oldMp=bot.getMp();
+        boolean pink=BotPinkBeanRun.inInstance(bot)||BotHorntailRun.inInstance(bot);
+        Integer guard=pink?bot.getBuffedValue(client.BuffStat.MAGIC_GUARD):null;
         int direction=mob.getPosition().x>bot.getPosition().x?0:1;
         var buffer=Unpooled.wrappedBuffer(hitPacket(net.server.Server.getInstance().getCurrentTimestamp(),mob,index,damage,direction));
-        try {DAMAGE.handlePacket(new ByteBufInPacket(buffer),bot.getClient());}finally{buffer.release();}
+        try {DAMAGE.handlePacket(new ByteBufInPacket(buffer),bot.getClient());}finally{
+            buffer.release();
+            // Preserve the fatal hit context even if native death processing throws.
+            if(pink&&oldHp>0&&bot.getHp()<=0)org.slf4j.LoggerFactory.getLogger(BotMobAttackObserver.class).warn("{} fatal observed attack: bot={} source={} attack={} damage={} hpBefore={} mpBefore={} magicGuard={} pos={}",BotHorntailRun.inInstance(bot)?"Horntail":"Pink Bean",bot.getName(),mob.getId(),index,damage,oldHp,oldMp,guard,bot.getPosition());
+        }
         entry.mobHitCooldownMs=BotMovementManager.delayAfterCurrentTick(BotCombatManager.cfg.MOB_HIT_COOLDOWN_MS);
         // The shared handler applies damage/status; a real client also performs its recoil movement.
         // React only to actual stat loss, so misses/blocked hits do not shove headless characters.
         if(damage>0&&bot.getHp()>0&&(bot.getHp()<oldHp||bot.getMp()<oldMp))
             BotObservedHitReaction.apply(entry,bot,mob);
-        if(bot.getHp()>0)bot.triggerAutopotAfterStatLoss(bot.getHp()-oldHp,bot.getMp()-oldMp);
+        if(bot.getHp()>0&&BotHorntailSeduce.canUsePotions(bot))bot.triggerAutopotAfterStatLoss(bot.getHp()-oldHp,bot.getMp()-oldMp);
     }
 }

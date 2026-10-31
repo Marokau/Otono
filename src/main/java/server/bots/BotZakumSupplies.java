@@ -36,6 +36,7 @@ public final class BotZakumSupplies {
     static void restock(BotEntry entry, Character bot) {
         if (!(bot.getClient() instanceof BotClient) || bot.getEventInstance() != null)
             throw new IllegalArgumentException("Restock dedicated companions outside the fight");
+        BotRaidCooldowns.prepare(bot);
         for (var item : List.copyOf(bot.getInventory(InventoryType.USE).list())) {
             if (item.getItemId() / 10000 == 207 && (item.getQuantity() == 0 || item.getItemId() == 2070015))
                 InventoryManipulator.removeFromSlot(bot.getClient(), InventoryType.USE, item.getPosition(), item.getQuantity(), false);

@@ -73,6 +73,8 @@ Do not copy a graph version from a KB note. The current value and full schema hi
 - [`kb_bot_pq_guidance.md`](kb_bot_pq_guidance.md): stage introductions, human reading pauses and per-instance speech for the remaining dedicated crews.
 - [`kb_bot_gpq.md`](kb_bot_gpq.md): guild creation/crew membership, GPQ through puzzles, sacrifice, Ergoth, rewards and normal exit; human-client accepted with an Ergoth survivability caveat; latest protection changes not yet re-audited.
 - [`kb_bot_mvpq.md`](kb_bot_mvpq.md): normal entry, earned letters, Beginner-accessible traversal, hazards and human-led waiting; full bot-only clear through rewards/exit and human-client verified 2026-10-25.
+- [`kb_bot_horntail.md`](kb_bot_horntail.md): human-client clear in about 46 main-body minutes with no observed deaths; native trial/raid, individual Seduce targeting and upper-head firing follow-up.
+- [`kb_bot_pinkbean.md`](kb_bot_pinkbean.md): thirty-person headless full clear within the native hour; approximately 59m27s from observed entry, 45 deaths and seven drop pickups. Two narrow native-hour clears; latest rerun eliminated logged body-contact fatalities but still had 58 observed deaths. Five-minute safety margin, attack/Seduce survival, safe return positioning and human-client verification remain unresolved.
 - [`kb_bot_kpq.md`](kb_bot_kpq.md): Kerning PQ gameplay entry and NPC paths, companion-only
   automation, question-table mismatch, leader/pass collection, and instance simulation limits.
 - [`kb_bot_lpq.md`](kb_bot_lpq.md): Ludibrium PQ script requirements, supplied guide differences,
@@ -157,3 +159,5 @@ Do not copy a graph version from a KB note. The current value and full schema hi
 
 - [`kb_bot_pq_names.md`](kb_bot_pq_names.md): dedicated crew naming conventions and future prefixes.
 - [`kb_bot_pq_boss_loot.md`](kb_bot_pq_boss_loot.md): human-first boss loot, deliberate redrops and stage-item exceptions.
+
+- [`kb_bot_raid_equipment.md`](kb_bot_raid_equipment.md): native raid gear goals, Gelt/Apple supplies, secondary AP readiness and saved external class-build references.

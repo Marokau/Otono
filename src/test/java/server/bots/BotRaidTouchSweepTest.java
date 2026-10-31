@@ -1,0 +1,7 @@
+package server.bots;
+import client.Character;import java.awt.Point;import org.junit.jupiter.api.Test;import static org.mockito.Mockito.*;import static org.junit.jupiter.api.Assertions.*;
+class BotRaidTouchSweepTest {
+ @Test void invulnerabilityDoesNotAccumulateAChordAcrossAnEntireRaidJump(){var b=mock(Character.class);var e=new BotEntry(b,b,null);e.lastMobTouchCheckPos=new Point(-695,-42);e.lastMobTouchMapId=270050100;e.mobHitCooldownMs=1000;when(b.getPosition()).thenReturn(new Point(-541,-199));when(b.getMapId()).thenReturn(270050100);try(var pink=mockStatic(BotPinkBeanRun.class)){pink.when(()->BotPinkBeanRun.inInstance(b)).thenReturn(true);BotCombatManager.tickMobDamage(e,b,true);assertEquals(b.getPosition(),e.lastMobTouchCheckPos);verify(b,never()).getHp();}}
+ @Test void skippedRaidSweepStillAdvancesThePhysicsSampleWithoutDealingDamage(){var b=mock(Character.class);var e=new BotEntry(b,b,null);when(b.getPosition()).thenReturn(new Point(508,-300));when(b.getMapId()).thenReturn(240060200);try(var horn=mockStatic(BotHorntailRun.class)){horn.when(()->BotHorntailRun.inInstance(b)).thenReturn(true);BotCombatManager.tickMobDamage(e,b,false);assertEquals(b.getPosition(),e.lastMobTouchCheckPos);verify(b,never()).getHp();}}
+ @Test void ordinaryPopulationCooldownPathRetainsItsExistingBehavior(){var b=mock(Character.class);var e=new BotEntry(b,b,null);var old=new Point(1,2);e.lastMobTouchCheckPos=old;e.mobHitCooldownMs=1000;BotCombatManager.tickMobDamage(e,b,true);assertSame(old,e.lastMobTouchCheckPos);verify(b,never()).getPosition();}
+}

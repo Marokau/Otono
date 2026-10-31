@@ -382,8 +382,8 @@ BOTH PARTS. The JUMP/FJ landing guard and `lastRegionId` chain continuity are co
 load-bearing (shared ground is real; the phantom-jump class persists). `lastRegionId` also now
 feeds `moverZMassFor` — the airborne wall scope reuses the chain-continuity region.
 
-Client-truth audit notes (v95 PDB `D:\ReverseEngineer\MapleStoryV95-PDB-IncludeDllAndOther`,
-struct dump tool `D:\ReverseEngineer\pdb_types.py`):
+Client-truth audit notes (v95 PDB `external v95 PDB toolkit`,
+struct dump tool `pdb_types.py`):
 - `CStaticFoothold`: +0x2c `m_lPage` (WZ layer), +0x30 `m_lZMass` (WZ group), +0x40 `m_uvx`,
   +0x50 `m_len`, +0x64/+0x68 prev/next. `CWvsPhysicalSpace2D`: +0x40 `m_nBaseZMass` = smallest
   group value in the map (computed in `Load` @v83 0xa44c7c).
@@ -766,3 +766,42 @@ Course 674030000 exposed two distinct layers. First, the ladder exit from (-852,
 Second, the ordinary lower jump from about (-1109,65) toward (-1212,5) was valid in isolated physics but looped in the complete executor. Near (-1155,-47), a coordinate snap found the OVERHEAD y=-55 ledge before actual landing. Navigation replaced the takeoff region/collision group and replanned a DROP from that other ledge, causing a wall hit and return. Authored fixed arcs now resolve as airborne until real landing; any airborne near-ground recovery probe preserves lastRegionId. Settled rope-bottom recovery remains available for non-authored motion. This executor fix changes no baked geometry and needs no additional graph version.
 
 BotMvpqMovementTest reproduces the invalid rope sample, compares baked/live ground-jump landings, rejects premature overhead attachment, and runs the complete lower-jump movement stack. The overhead and full-stack tests failed before the executor correction and passed afterward. Existing 44 navigation tests and the GPQ jump-course regressions also passed. The inherited isolated starting islands were a separate content defect. After explicit approval, native entry and pit reset now use the connected bottom-right ladder platform. A complete unbuffed Beginner replay reaches the guide; task-aware ordinary walking/falling uses the real pit reset if a search later lands on an isolated island. The crew opens reachable island boxes before choosing recovery.
+
+
+## Otono Horntail trial: Flash Jump first contact is not a stable landing (2026-10-25)
+
+In cave 240050101 at speed/jump 140/123, the authored Flash Jump from (864,-160) to the small upper ledge passed first-contact simulation. The live bot contacted near (1116,-280), then ordinary ground inertia walked off the ledge on the next tick, fell to y=260 and repeated the same rope/jump route. Flash Jump cache authoring now applies the same three grounded post-landing ticks already used for normal jumps and rejects lost-ground outcomes before forming launch windows. No runtime prediction, physics boost, pickup change or widened executor tolerance is involved. Production graph version 80 invalidates old baked data. BotHorntailMovementTest reproduces the unstable window and rejects it after correction; the same live crew then completed the native trial twice.
+
+
+## Otono Pink Bean: safe stance does not imply safe entry (2026-10-26)
+
+Captured Hugin/Munin contact deaths exposed encounter route intent rather than bad authored physics. Several valid jump entries reach a lower firing platform; the inner-side entry can cross a living bird. A real position at the end of an arc is not evidence that the approach avoided contact. Pink-only movement now requests the outer half of the platform, uses outward descent for support trips, and prepositions during the native wave warning/before the last statue dies. Normal few-pixel arrival tolerance avoids an endless positioning hold. Graph data, launch windows and physics are unchanged; no graph-version bump is appropriate.
+
+Regressions in BotPinkBeanTest and BotPinkBeanStrategyTest cover outer destination intent, pre-spawn warning behavior and ordinary arrival. Fatal-hit logs and native death/recovery records distinguish actual contact from assumptions. See [Pink Bean companions](kb_bot_pinkbean.md) for the current live-verification limits.
+
+
+The fresh Pink retry also caught a task-policy oscillation after Hugin died: a wave-number-only outer-stance correction kept opposing travel to Rex. That correction now applies only during the native wave warning or while the adjacent bird remains. A controller regression covers the transition; all twelve subsequently crossed and resumed attacking with zero deaths. This is an encounter-policy gate, not evidence for changing the graph or movement tolerances.
+
+
+## Otono Pink Bean: floor staging cancels the upper-platform route (2026-10-27)
+
+At Ariel, the floor-first encounter adapter kept replacing an upper-platform goal such as (-219,-456) with (-219,-42). The exact version-80 graph already supplied a legal path: lower jump, rope at -541, intermediate platform, rope at -463, upper platform. As the bot walked toward the first launch point, the adapter pulled it back under the final x again. The pathlog showed alternating floor/upper goals and jump-pos; changing the authored jump would have fixed the wrong layer.
+
+Restrict floor staging to the low statue firing-platform band (-110 through -90). Upper goals now stay intact and ordinary navigation executes the rope route. Existing low-platform precautions still apply. BotPinkBeanTest covers multiple floor starting positions; focused tests/package passed. In the live unchanged instance, the stalled bots climbed and resumed Ariel attacks, including melee. No graph, launch window, physics or graph-version change.
+
+
+Ariel subsequently exposed a second upper-route hazard: support trips could cross the occupied central gap between upper platforms. Two captured contact deaths occurred there. Pink-only route intent now descends outward, crosses on the bottom floor and approaches the opposite side through its existing ropes; central support/revive destinations use the same precaution. Unit regressions cover the intent. This follow-up was installed after Ariel's death, so a fresh live-Ariel crossing is still required; graph/physics remain unchanged.
+
+## Horntail recoil escaping through a zero item-drop bound
+
+October 29, 2026: two companions in map 240060000 fell at x=0 below all geometry after client-observed ice breath. VRLeft and actual ground begin at x=90. FootholdTree's minDropX/maxDropX initialize at zero and are item-drop bounds, not reliable collision extents on all-positive/all-negative maps. effectiveLeftBoundaryX/effectiveRightBoundaryX now use the cached collision index's actual ground extents when available; existing real foothold overhang handling is retained. Graph version 81 invalidates affected authored arcs on future startup. Mirrored positive/negative geometry regressions and the existing physics suite pass; the active map diagnostic changes the left wall from 0 to 90 and returns a simulated outward launch to (90,-40). Actual client follow-up remains pending. Do not fix this with stronger movement, immunity, or widening navigation windows.
+
+## Horntail main-body crossing: safe endpoints do not guarantee a safe path
+
+October 29, 2026: the repeated native raid recorded one fatal right-head contact during the headless leader's raised-platform side change (15,175 damage, prior HP 8,609). A Bishop revived him normally. The main-body adapter now stages cross-side movement through the existing outer descent and bottom floor, then climbs near the destination; no path simulation, movement shortcut or launch-window change is added. The crossing regression covers the descent/floor/climb sequence and leaves Pink Bean unchanged. No further deaths occurred after the mid-run update, and the full repeat cleared in 45m56s with all eleven companions deathless and all twelve alive at victory. A fresh human-client breath/stun/Dispel audit remains required.
+
+Horntail support/combat movement handoff: preserve `entry.moveTarget` in both support and combat while climbing or airborne. Otherwise support can reach Heal range halfway through a route, release control, and let combat reinstate an older cached stance; HornBishop2's pathlog showed repeated right-rope ascents/descents. Fix the encounter intent layer, not graph/rope physics. Regressions cover rope/airborne combat handoffs and support stance reselection; ten focused tests passed and the change was applied live.
+
+Horntail melee floor-staging oscillation: destination (392,-160) alternated with (392,260) at the 35px x-distance threshold, while the graph needed a rope launch farther right. Restrict floor staging to opposite-side transitions, preserving same-side upper-route intent. This is an encounter-adapter bug, not rope physics; no graph version bump.
+
+Horntail Bishop platform ping-pong can persist after movement-intent preservation: a combat stance outside the chosen ranged teammate's native Heal range causes support to reverse the completed trip. Share healing-anchor selection and restrict Bishop combat/reposition candidates to Heal coverage; do not modify rope physics or graph windows. Captured y80 combat versus y20 support stances for an ally at y-160 reproduce this conflict. Focused tests passed; live wing-phase follow-up pending after a client disconnect.

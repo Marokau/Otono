@@ -1,5 +1,30 @@
 # Otono release notes
 
+## Horntail and Pink Bean PQ bot crews added and verified - October 31, 2026
+
+Release title: `Horntail and Pink Bean PQ bot crews added and verified`
+
+### Added
+
+- Dedicated Horntail trial companions and a twelve-participant Horntail expedition crew through the activity NPC menus. Human prerequisite requirements remain in place; companion-only preparation supplies the bots' prerequisites.
+- Horntail raid preparation, supported parties, boss positioning, recovery after Dispel, native ailments and damage over time, and Hero's Will/Resurrection handling. The main-body timer is twelve hours.
+- Pink Bean expedition companions: 29 bots plus the human leader, grouped into five supported parties. The roster has 14 Night Lords and five each of Bishops, Dark Knights and Bowmasters. Finished raid equipment, native scrolling, HP preparation, ammunition and consumables are retained between attempts.
+- Statue-wave assignments, reflect activation warnings, safe return routes, and human participation without requiring the crew to wait for the human's formation position. Native boss stats and the 60-minute Pink Bean timer remain unchanged.
+- Compact local Pink Bean result logging in `logs/pinkbean-audit.log` for unattended client runs.
+
+### Verification and limitations
+
+- **Horntail expedition: human-client verified.** The successful audit finished the main body in about 46 minutes with no observed deaths. The subsequent upper-right-head projectile-height correction passed automated checks but still needs explicit client firing confirmation.
+- **Horntail trials:** implemented and exercised in headless testing; do not infer a separate human-client trial audit from the raid audit.
+- **Pink Bean: human-client verified October 31.** The native event recorded a clear at 59m53s with four aggregate participant deaths and 29 living participants at clear. This was the 29-bot Night Lord-heavy roster, plus the human. Timer margin is narrow; a repeatable 50-minute clear has not been established.
+- Throwing-star projectiles can still be invisible on upper platforms despite accepted damage. The attempted packet-display change was reverted after it failed the client check.
+- All crews remain separate from the autonomous population. Ordinary human entry requirements and native skill costs/cooldowns still apply.
+
+### Updating
+
+Pull the update, rebuild with Maven and restart the server. Keep your own configuration and database. No local runtime logs, recordings, personal configuration or development Git history are included in the release.
+
+
 ## GPQ and MVPQ bot crews - October 25, 2026
 
 Commit title: `PQ bots for MVPQ and GPQ added.`

@@ -24,6 +24,11 @@ Vs Pink Bean - Resurrection stage portal
 */
 
 function enter(pi) {
+    const Lives = Java.type('server.expeditions.PinkBeanLives');
+    if (Lives.exhausted(pi.getPlayer())) {
+        pi.playerMessage(5, "Your five Pink Bean lives are exhausted. Wait for the expedition to end.");
+        return false;
+    }
     pi.playPortalSound();
     pi.warp(270050100);
     return true;

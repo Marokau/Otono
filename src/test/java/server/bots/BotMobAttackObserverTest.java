@@ -49,6 +49,17 @@ class BotMobAttackObserverTest {
         }
     }
 
+    @Test void pinkBeanHeadlessClientForwardsStatueAttackPackets() {
+        var bot=mock(Character.class);var client=spy(new client.BotClient(0,1));
+        doReturn(bot).when(client).getPlayer();doReturn(null).when(client).getCM();
+        var packet=mock(net.packet.Packet.class);
+        try(var pink=mockStatic(BotPinkBeanRun.class);var observer=mockStatic(BotMobAttackObserver.class)) {
+            pink.when(()->BotPinkBeanRun.inInstance(bot)).thenReturn(true);
+            client.sendPacket(packet);
+            observer.verify(()->BotMobAttackObserver.observe(bot,packet));
+        }
+    }
+
     @Test void gpqHeadlessClientForwardsErgothAttackPackets() {
         var bot=mock(Character.class);var client=spy(new client.BotClient(0,1));
         doReturn(bot).when(client).getPlayer();doReturn(null).when(client).getCM();

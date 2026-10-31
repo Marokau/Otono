@@ -51,4 +51,11 @@ class BotPqChatTest {
         assertFalse(BotPqChat.isCurrent(entry,entry.msgQueue.poll()));
         assertTrue(BotPqChat.isCurrent(entry,new BotChatManager.QueuedMessage("Need summoning rocks",false)));
     }
+    @Test void pinkBeanWaveGuidanceExpiresWhenTheNativeWaveChanges(){
+        var bot=mock(Character.class);var event=mock(EventInstanceManager.class);var entry=new BotEntry(bot,bot,null);entry.msgSending=true;
+        when(bot.getMapId()).thenReturn(270050100);when(bot.getEventInstance()).thenReturn(event);when(event.getIntProperty("stage")).thenReturn(1);
+        BotPqChat.queue(entry,"Statue Wave One: Solomon awakens.",false);assertTrue(BotPqChat.isCurrent(entry,entry.msgQueue.poll()));
+        BotPqChat.queue(entry,"Statue Wave One: Solomon awakens.",false);when(event.getIntProperty("stage")).thenReturn(2);assertFalse(BotPqChat.isCurrent(entry,entry.msgQueue.poll()));
+        BotPqChat.queue(entry,"Statue Wave Two: Rex awakens.",false);when(event.isEventCleared()).thenReturn(true);assertFalse(BotPqChat.isCurrent(entry,entry.msgQueue.poll()));
+    }
 }

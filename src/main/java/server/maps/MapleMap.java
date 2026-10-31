@@ -112,7 +112,7 @@ public class MapleMap {
     // Monster fast-index (oid -> Monster): a write-through view of the MONSTER-typed entries in
     // mapobjects, maintained under objectWLock at the same add/remove sites (addMapObject,
     // spawnAndAddRangedMapObject, removeMapObject). Lets getMonsters()/getAllMonsters() answer without
-    // taking objectRLock and walking ALL map objects (mobs+drops+npcs+summons) — that O(all-objects) scan
+    // taking objectRLock and walking ALL map objects (mobs+drops+npcs+summons) â€” that O(all-objects) scan
     // was the objectRLock convoy source behind the multi-second bot tick tail-stalls at high bot density.
     // ConcurrentHashMap so monster queries are lock-free (callers already tolerate weak consistency via
     // isAlive() checks).
@@ -2487,7 +2487,7 @@ public class MapleMap {
             broadcastSpawnPlayerMapObjectMessage(chr, chr, true);
         }
 
-        // Unobserved-map LOD (docs/bot/unobserved-lod-design.md §4): a real player entering promotes
+        // Unobserved-map LOD (docs/bot/unobserved-lod-design.md Â§4): a real player entering promotes
         // this map's bots to full fidelity. Snap any LOD1 bot onto its foothold BEFORE the entering
         // client's spawn packets are built below, so none is seen floating/underground on entry.
         if (!(chr.getClient() instanceof BotClient)) {
@@ -2715,7 +2715,7 @@ public class MapleMap {
     }
 
     /**
-     * Remove a stale PLAYER object that no longer corresponds to a live character on this channel —
+     * Remove a stale PLAYER object that no longer corresponds to a live character on this channel â€”
      * a leftover from a disconnect racing a map change. Unlike {@link #removePlayer} this touches no
      * character state (the instance may already be disposed: null client/inventory), only this map's
      * collections plus the despawn broadcast, so entering clients stop receiving its spawn data.
@@ -2785,10 +2785,12 @@ public class MapleMap {
 
     private void broadcastMessage(Character source, Packet packet, double rangeSq, Point rangedFrom) {
         // Bots broadcast movement/attack/stance/damage every tick. If only bots populate the map
-        // (no human or hidden GM to render them), nobody observes these packets — skip the send.
+        // (no human or hidden GM to render them), nobody observes these packets â€” skip the send.
         // Humans always observe their own broadcasts, so this never changes player-visible behavior;
         // a bot's server-side state (position/stance/HP) is re-sent via spawn when a player enters.
-        if (source != null && source.getClient() instanceof BotClient && !isObservedByPlayer()) {
+        // Raid monster movement is also collision input for BotClient, so retain it.
+        if (source != null && source.getClient() instanceof BotClient && !isObservedByPlayer()
+                && !server.bots.BotRaidAttackPackets.required(source, packet)) {
             return;
         }
         net.packet.logging.MonitoredChrLogger.logBroadcastIfMonitored(source, packet.getBytes());

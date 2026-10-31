@@ -34,7 +34,7 @@ var clearMap = 240050600;
 var minMapId = 240060000;
 var maxMapId = 240060200;
 
-var eventTime = 120;     // 120 minutes
+var eventTime = 720;     // 12 hours; shared with the main-body crystal.
 
 const maxLobbies = 1;
 
@@ -64,7 +64,7 @@ function setEventRequirements() {
     }
 
     reqStr += "\r\n    Time limit: ";
-    reqStr += eventTime + " minutes";
+    reqStr += (eventTime / 60) + " hours";
 
     em.setProperty("party", reqStr);
 }
@@ -95,6 +95,7 @@ function setup(channel) {
     var eim = em.newInstance("Horntail" + channel);     // thanks Thora (Arufonsu) for reporting an issue with misleading event name here
     eim.setProperty("canJoin", 1);
     eim.setProperty("defeatedBoss", 0);
+    eim.setIntProperty("mainBodyMinutes", eventTime);
     eim.setProperty("defeatedHead", 0);
 
     var level = 1;

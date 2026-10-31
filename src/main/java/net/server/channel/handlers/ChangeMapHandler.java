@@ -87,6 +87,11 @@ public final class ChangeMapHandler extends AbstractPacketHandler {
 
             if (targetMapId != -1) {
                 if (!chr.isAlive()) {
+                    if (server.expeditions.PinkBeanLives.exhausted(chr)) {
+                        chr.dropMessage(5, "Pink Bean: Your five lives are exhausted. Watch until this run ends.");
+                        c.sendPacket(PacketCreator.enableActions());
+                        return;
+                    }
                     MapleMap map = chr.getMap();
                     if (wheel && chr.haveItemWithId(ItemId.WHEEL_OF_FORTUNE, false)) {
                         // thanks lucasziron (lziron) for showing revivePlayer() triggering by Wheel

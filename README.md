@@ -40,8 +40,10 @@ These activities passed my human-led client audits:
 | Sharenian Guild PQ | Human-client verified; companions can be vulnerable to Ergoth attacks. Latest protection changes await a repeat client boss audit |
 | MV's Lair PQ | Human-client verified |
 | Zakum | Verified with twelve participants: one human and eleven bots |
+| Horntail | Human-client verified with twelve participants; about 46 minutes for the main body, no observed deaths |
+| Pink Bean | Human-client verified with thirty participants; 59m53s within the native hour, four aggregate participant deaths |
 
-Verification reflects the runs documented in this project, not a guarantee that every possible party composition or edge case has been tested. Horntail, Pink Bean, and other activities listed in the guide do not yet have the same dedicated, verified bot support.
+Verification reflects the runs documented in this project, not a guarantee that every possible party composition or edge case has been tested. Horntail trials also have dedicated companion support exercised in headless testing. Pink Bean has a narrow clear margin; a repeatable 50-minute clear is not established. Other activities in the guide may not yet have dedicated bot support.
 
 See the [content catalog](__Otono%20Server%20Docs/Otono-PQ-catalog.md) for the broader activity inventory and distinctions between existing game content and dedicated bot support.
 

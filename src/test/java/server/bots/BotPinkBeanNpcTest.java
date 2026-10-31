@@ -1,0 +1,14 @@
+package server.bots;
+import client.Character;import scripting.event.EventManager;import server.expeditions.*;import org.junit.jupiter.api.Test;import javax.script.*;import java.nio.file.*;import static org.mockito.Mockito.*;import static org.junit.jupiter.api.Assertions.*;
+class BotPinkBeanNpcTest {
+ public static class Conversation {public final Character player=mock(Character.class);public final EventManager event=mock(EventManager.class);public String menu="",answer="";public Character getPlayer(){return player;}public EventManager getEventManager(String n){return event;}public Expedition getExpedition(ExpeditionType t){return null;}public int createExpedition(ExpeditionType t){return 0;}public void sendSimple(String s){menu=s;}public void sendOk(String s){answer=s;}public void dispose(){}}
+ private ScriptEngine open(Conversation cm)throws Exception{when(cm.player.getLevel()).thenReturn(180);var e=new ScriptEngineManager().getEngineByName("graal.js");var b=e.getBindings(ScriptContext.ENGINE_SCOPE);b.put("polyglot.js.allowHostAccess",true);b.put("polyglot.js.allowHostClassLookup",true);b.put("cm",cm);e.eval(Files.readString(Path.of("scripts/npc/2141001.js")));e.eval("start();");return e;}
+ @Test void normalCreationAndSeparateCrewMenuBothWork()throws Exception{var c=new Conversation();var e=open(c);assertTrue(c.menu.indexOf("Lets get this going")<c.menu.indexOf("BotPQ Menu"));e.eval("action(1,4,1);");assertTrue(c.answer.contains("has been created"));}
+ @Test void assemblyUsesDedicatedCrewService()throws Exception{var c=new Conversation();try(var crews=mockStatic(BotPinkBeanCompanions.class)){crews.when(()->BotPinkBeanCompanions.assemble(c.player)).thenReturn("ready");var e=open(c);e.eval("action(1,4,900);");assertEquals("ready",c.answer);}}
+ @Test void dismissalUsesDedicatedCrewService()throws Exception{var c=new Conversation();try(var crews=mockStatic(BotPinkBeanCompanions.class)){crews.when(()->BotPinkBeanCompanions.release(c.player)).thenReturn("dismissed");var e=open(c);e.eval("action(1,4,901);");assertEquals("dismissed",c.answer);}}
+ public static class ExitConversation {public String prompt="";public int destination;public Object getEventInstance(){return null;}public void sendYesNo(String text){prompt=text;}public void warp(int map,int portal){destination=map;}public void dispose(){}}
+ @Test void revivedPlayersWithoutAnEventCanConfirmTheNormalNpcExit()throws Exception{
+  var c=new ExitConversation();var e=new ScriptEngineManager().getEngineByName("graal.js");var bindings=e.getBindings(ScriptContext.ENGINE_SCOPE);bindings.put("polyglot.js.allowHostAccess",true);bindings.put("cm",c);e.eval(Files.readString(Path.of("scripts/npc/2141002.js")));e.eval("start();");assertTrue(c.prompt.contains("no longer active"));assertEquals(0,c.destination);e.eval("action(1,0,0);");assertEquals(270050000,c.destination);
+ }
+
+}

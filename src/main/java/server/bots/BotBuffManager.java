@@ -222,7 +222,9 @@ final class BotBuffManager {
     private static boolean needsAnyBuffStat(BotEntry entry, Character bot, StatEffect fx) {
         for (Pair<BuffStat, Integer> statup : fx.getStatups()) {
             BuffStat stat = statup.getLeft();
-            if (bot.getBuffedValue(stat) != null) {
+            Integer active=bot.getBuffedValue(stat);
+            if (active != null && !((BotPinkBeanRun.inInstance(bot)||BotHorntailRun.inInstance(bot)) && !entry.buffCheapMode
+                    && (stat==BuffStat.WATK || stat==BuffStat.MATK) && statup.getRight()>active)) {
                 continue;
             }
             if (!isRelevantBuffStat(bot, stat)) {

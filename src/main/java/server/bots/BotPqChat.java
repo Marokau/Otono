@@ -39,6 +39,12 @@ final class BotPqChat {
                 return armNotice?armsAlive:!armsAlive&&bodyActive;
             }
         }
+        if(context.map==BotPinkBeanRun.ARENA && message.text.startsWith("Statue Wave ")){
+            if(context.event==null || context.event.isEventCleared())return false;
+            int wave=context.event.getIntProperty("stage");
+            String[] labels={"One","Two","Three","Four","Five"};
+            return wave>=1&&wave<=5&&message.text.startsWith("Statue Wave "+labels[wave-1]+":");
+        }
         int stage=context.map-BotKpqRun.FIRST_MAP+1;
         if(context.map>=BotLpqRun.FIRST_MAP && context.map<=922010900) {
             int lpqStage=(context.map-BotLpqRun.FIRST_MAP)/100+1;

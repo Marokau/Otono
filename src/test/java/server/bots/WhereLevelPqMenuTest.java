@@ -32,15 +32,14 @@ class WhereLevelPqMenuTest {
         var engine=new ScriptEngineManager().getEngineByName("graal.js");
         var bindings=engine.getBindings(ScriptContext.ENGINE_SCOPE);
         bindings.put("polyglot.js.allowHostAccess",true);bindings.put("polyglot.js.allowHostClassLookup",true);bindings.put("cm",npc);
-        engine.eval(Files.readString(Path.of("scripts/npc/wherelevel.js")));engine.eval("start(); action(1,4,6);");return engine;
+        engine.eval(Files.readString(Path.of("scripts/npc/wherelevel.js")));engine.eval("start(); action(1,4,6); action(1,4,0);");return engine;
     }
     @Test void eachPqOpensSummaryAndConfirmedTeleportToItsRecruitMap()throws Exception {
         int[] maps={100000200,103000000,980000000,221024500,300030100,200080101,220000000,980030000,251010404,261000011,980010000,670010100,101030104,610030020,674030100,240050000,970030000,193000000,889100000,889100010,889100020,922240200,925020001,211000001,925010200,220050300};
         for(int i=0;i<maps.length;i++) {
             var npc=new Npc();var e=open(npc,true);
             assertTrue(npc.text.contains("Henesys PQ: Levels 10-255, 3-6 players"));
-            assertTrue(npc.text.contains("Carnival PQ: Levels 30-50, 2-6/team"));
-            assertTrue(npc.text.contains("Carnival PQ 2: Levels 51-70, 2-6/team"));
+            e.eval("partyFolders(); action(1,4,[\"Party Quests\",\"Challenges\",\"PVP PQs\"].indexOf(activityCategory(tourParties["+i+"][0])));");
             e.eval("action(1,4,"+i+");");
             assertTrue(npc.text.contains("Teleport to "));assertTrue(npc.text.contains("#m"+maps[i]+"#"));
             assertTrue(npc.text.contains("Menu navigation"));
@@ -65,13 +64,13 @@ class WhereLevelPqMenuTest {
         for(int i=0;i<maps.length;i++) {
             var npc=new Npc();var e=open(npc,true);
             e.eval("action(1,4,900); action(1,4,7);");
-            assertTrue(npc.text.contains("Expeditions & Bosses"));
+            assertTrue(npc.text.contains("Bosses & Expeditions"));
             e.eval("action(1,4,"+i+");");
             assertTrue(npc.text.contains("#m"+maps[i]+"#"));
             assertTrue(npc.text.contains("Back to Expeditions"));
             assertFalse(npc.text.contains("#p0#"));
-            assertTrue(npc.text.contains(i==0 ? "Dedicated bot crew available." : "Dedicated bot crew not implemented yet."));
-            e.eval("action(1,4,0);");assertTrue(npc.text.contains("Expeditions & Bosses"));
+            assertTrue(npc.text.contains(i<=2 ? "Dedicated bot crew available." : "Dedicated bot crew not implemented yet."));
+            e.eval("action(1,4,0);");assertTrue(npc.text.contains("Bosses & Expeditions"));
             e.eval("action(1,4,"+i+"); action(1,4,1); action(1,1,0);");
             assertEquals(maps[i],npc.warped);
         }

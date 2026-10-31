@@ -26,6 +26,15 @@ function action(mode, type, selection) {
         }
 
         var eim = cm.getEventInstance();
+        if (eim == null) {
+            if (status == 0) {
+                cm.sendYesNo("Your expedition is no longer active. Would you like to return to the Forgotten Temple Manager?");
+            } else if (status == 1) {
+                cm.warp(270050000, 0);
+                cm.dispose();
+            }
+            return;
+        }
         if (!eim.isEventCleared()) {
             if (status == 0) {
                 cm.sendYesNo("Do you want to get out now?");

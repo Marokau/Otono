@@ -17,7 +17,7 @@ final class BotHurricane {
     private BotHurricane() {}
 
     static boolean ready(BotEntry entry, Character bot, BotCombatManager.AttackPlan plan, long now) {
-        if (plan.skillId != Bowmaster.HURRICANE || !BotZakumBattle.inInstance(bot)) {
+        if (plan.skillId != Bowmaster.HURRICANE || !(BotZakumBattle.inInstance(bot) || BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) {
             cancel(bot);
             return true;
         }
@@ -32,7 +32,12 @@ final class BotHurricane {
         }
         if (now < old.ready) return false;
         BotHurricaneVisual.refresh(bot,plan,now);
-        HOLDS.put(bot, new Hold(old.map, old.position, old.facing, old.ready, now));
+        long next=old.ready+SHOT_MS;
+        // Carry ordinary sub-tick lateness forward, without banking missed shots after a stall.
+        if(next<=now)next=now+SHOT_MS;
+        HOLDS.put(bot, new Hold(old.map, old.position, old.facing, next, now));
+        entry.attackCooldownMs=Math.max(entry.attackCooldownMs,
+                Math.max(0,(int)(next-now)-BotPhysicsEngine.cfg.TICK_MS));
         return true;
     }
 

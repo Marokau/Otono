@@ -121,4 +121,10 @@ class BotBuffManagerTest {
         when(fx.getStatups()).thenReturn(List.of(new Pair<>(stat, value)));
         return fx;
     }
+    @Test void pinkBeanBestModeUpgradesWeakerAttackBuffsWithoutChangingOtherModes()throws Exception {
+        var b=mock(Character.class);when(b.getJobStyle()).thenReturn(Job.WARRIOR);when(b.getMapId()).thenReturn(270050100);var event=mock(scripting.event.EventInstanceManager.class);when(b.getEventInstance()).thenReturn(event);when(event.getName()).thenReturn("PinkBean1");
+        var fx=mock(StatEffect.class);when(fx.getStatups()).thenReturn(List.of(new Pair<>(BuffStat.WATK,100)));var e=new BotEntry(b,b,null);e.buffCheapMode=false;when(b.getBuffedValue(BuffStat.WATK)).thenReturn(12);
+        var decision=BotBuffManager.class.getDeclaredMethod("needsAnyBuffStat",BotEntry.class,Character.class,StatEffect.class);decision.setAccessible(true);assertTrue((boolean)decision.invoke(null,e,b,fx));when(b.getBuffedValue(BuffStat.WATK)).thenReturn(100);assertFalse((boolean)decision.invoke(null,e,b,fx));when(b.getBuffedValue(BuffStat.WATK)).thenReturn(120);assertFalse((boolean)decision.invoke(null,e,b,fx));when(b.getBuffedValue(BuffStat.WATK)).thenReturn(12);e.buffCheapMode=true;assertFalse((boolean)decision.invoke(null,e,b,fx));e.buffCheapMode=false;when(b.getMapId()).thenReturn(240060000);assertTrue((boolean)decision.invoke(null,e,b,fx));when(b.getBuffedValue(BuffStat.WATK)).thenReturn(100);assertFalse((boolean)decision.invoke(null,e,b,fx));when(b.getBuffedValue(BuffStat.WATK)).thenReturn(12);when(b.getMapId()).thenReturn(100000000);assertFalse((boolean)decision.invoke(null,e,b,fx));
+    }
+
 }

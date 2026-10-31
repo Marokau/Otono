@@ -20,6 +20,8 @@ public final class BotPqHooks {
      */
     public static boolean tick(BotEntry entry, Character bot, Character owner, boolean runAiTick) {
         server.bots.BotPqBossLoot.tick(entry, bot);
+        if (server.bots.BotPinkBeanRun.tick(entry, bot, runAiTick)) return true;
+        if (server.bots.BotHorntailRun.tick(entry, bot, runAiTick)) return true;
         if (server.bots.BotMvpqRun.tick(entry, bot, runAiTick)) return true;
         if (server.bots.BotGuildCompanions.tick(entry, bot, runAiTick)) return true;
         if (server.bots.BotCarnivalRun.tick(entry, bot, runAiTick)) return true;

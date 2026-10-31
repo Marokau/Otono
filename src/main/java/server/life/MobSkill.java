@@ -293,7 +293,7 @@ public class MobSkill {
     private void spawnMonsterMist(Monster monster) {
         Rectangle mistArea = calculateBoundingBox(monster.getPosition());
         var mist = new Mist(mistArea, monster, this);
-        int mistDuration = x * 100;
+        int mistDuration = Math.toIntExact(getDuration());
         monster.getMap().spawnMist(mist, mistDuration, false, false, false);
     }
 

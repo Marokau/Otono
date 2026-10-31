@@ -334,7 +334,7 @@ final class BotPotionManager {
         }
         if (choice.hpItemId() > 0) {
             bot.changeKeybinding(91, new KeyBinding(7, choice.hpItemId()));
-            bot.setAutopotHpAlert(BotManager.cfg.AUTOPOT_HP_THRESH);
+            bot.setAutopotHpAlert(BotPinkBeanRun.inInstance(bot)?0.99f:BotHorntailRun.inInstance(bot)?0.95f:BotManager.cfg.AUTOPOT_HP_THRESH);
         } else {
             bot.getKeymap().remove(91);
             bot.setAutopotHpAlert(0f);

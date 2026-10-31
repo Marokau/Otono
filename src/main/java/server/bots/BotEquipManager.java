@@ -571,6 +571,7 @@ class BotEquipManager {
         }
         Job botJob = bot.getJob();
         boolean[] reqRel = scanReqRelevantDims(bySlot, ii);
+        if(BotPinkBeanEquipment.hpGoal(bot)>0){reqRel=java.util.Arrays.copyOf(reqRel,5);reqRel[4]=true;}
         for (Map.Entry<Short, List<Equip>> e : bySlot.entrySet()) {
             e.setValue(pruneDominatedWithReqs(ii, e.getValue(), botJob, reqRel));
         }
@@ -629,6 +630,7 @@ class BotEquipManager {
         // Re-prune so newly-added extras can knock out dominated incumbents (and vice versa).
         Job receiverJob = bot.getJob();
         boolean[] reqRel = scanReqRelevantDims(bySlot, ii);
+        if(BotPinkBeanEquipment.hpGoal(bot)>0){reqRel=java.util.Arrays.copyOf(reqRel,5);reqRel[4]=true;}
         for (Map.Entry<Short, List<Equip>> e : bySlot.entrySet()) {
             e.setValue(pruneDominatedWithReqs(ii, e.getValue(), receiverJob, reqRel));
         }
@@ -802,6 +804,8 @@ class BotEquipManager {
                                             Map<Short, List<Equip>> bySlot,
                                             MapDamageProfile mob,
                                             boolean[] reqRel) {
+        // First four axes preserve stat requirements; opt-in fifth axis preserves HP.
+        if(BotPinkBeanEquipment.hpGoal(bot)>0){reqRel=java.util.Arrays.copyOf(reqRel,5);reqRel[4]=true;}
         StatSnapshot init = weapon != null ? naked.swap(null, weapon) : naked;
         boolean is2H = weapon != null && hooks.isTwoHanded(weapon.getItemId());
         WeaponType wt = weapon != null ? hooks.getWeaponType(weapon.getItemId()) : null;
@@ -963,11 +967,20 @@ class BotEquipManager {
             }
             if (!dominated) kept.add(nodes.get(i));
         }
-        if (kept.size() > MAX_PARETO_STATES) {
+        int limit=reqRel!=null&&reqRel.length>4&&reqRel[4]?256:MAX_PARETO_STATES;
+        if (kept.size() > limit) {
             // Best-effort overload guard: keep the highest branch damage potential and drop
             // Pareto-front fringe under load.
             kept.sort((x, y) -> Integer.compare(damagePotential(y, wt), damagePotential(x, wt)));
-            kept = new ArrayList<>(kept.subList(0, MAX_PARETO_STATES));
+            if(reqRel!=null&&reqRel.length>4&&reqRel[4]){
+                // Keep survival-capable branches in the bounded frontier; ties retain DPS order.
+                for(int pick=0;pick<Math.min(limit,kept.size());pick++){
+                    int best=pick;
+                    for(int j=pick+1;j<kept.size();j++)if(kept.get(j).hp>kept.get(best).hp)best=j;
+                    if(best!=pick)java.util.Collections.swap(kept,pick,best);
+                }
+            }
+            kept = new ArrayList<>(kept.subList(0, limit));
             if (capHitOut != null && capHitOut.length > 0) capHitOut[0] = true;
         }
         return kept;
@@ -979,11 +992,11 @@ class BotEquipManager {
 
     private static List<DpNode> dedupEquivalentNodes(List<DpNode> nodes, WeaponType wt, boolean[] reqRel,
                                                      OptimizerHooks hooks, List<Short> dpSlots) {
-        Map<DpSignature, DpNode> bestValidBySignature = new LinkedHashMap<>();
-        Map<DpSignature, DpNode> bestSpeculativeBySignature = new LinkedHashMap<>();
+        Map<Object, DpNode> bestValidBySignature = new LinkedHashMap<>();
+        Map<Object, DpNode> bestSpeculativeBySignature = new LinkedHashMap<>();
         for (DpNode node : nodes) {
-            DpSignature signature = DpSignature.from(node, wt, reqRel);
-            Map<DpSignature, DpNode> bucket = allPicksMeetReqs(node, hooks, dpSlots)
+            Object signature = reqRel!=null&&reqRel.length>4&&reqRel[4] ? java.util.List.of(DpSignature.from(node,wt,reqRel),node.hp) : DpSignature.from(node,wt,reqRel);
+            Map<Object, DpNode> bucket = allPicksMeetReqs(node, hooks, dpSlots)
                     ? bestValidBySignature
                     : bestSpeculativeBySignature;
             DpNode existing = bucket.get(signature);
@@ -1023,10 +1036,11 @@ class BotEquipManager {
         vec[k++] = damagePotential(n, wt);
         vec[k++] = isMageJob(s.job()) ? 0 : s.totalAcc();
         if (reqRel != null) {
-            for (int i = 0; i < reqRel.length; i++) {
+            for (int i = 0; i < Math.min(4,reqRel.length); i++) {
                 if (reqRel[i]) vec[k++] = statByIdx(s, i);
             }
         }
+        if(reqRel!=null&&reqRel.length>4&&reqRel[4])vec[k++]=n.hp;
         return vec;
     }
 
@@ -1059,9 +1073,9 @@ class BotEquipManager {
         StatSnapshot s = node.snap;
         // Equip-order constraint: each item's reqs must be satisfied by the stats present
         // BEFORE that item is worn — an item's own contribution cannot count toward its own
-        // prereq. So check each pick (and the weapon) against the snapshot with that pick's
-        // stats removed. If every pick passes its without-self check, a valid wear order
-        // exists (equip the highest-margin items last).
+        // prereq. Check each pick (and weapon) against the snapshot without its own stats.
+        // This validates the final set, but mutually dependent pieces may still need
+        // temporary stat gear or a paid secondary-AP budget before the first equip.
         if (weapon != null) {
             StatSnapshot withoutSelf = s.swap(weapon, null);
             if (!hooks.meetsReqs(weapon, withoutSelf.job(), withoutSelf.level(),
@@ -1121,12 +1135,15 @@ class BotEquipManager {
 
     private static EquipScore scoreNode(Character bot, DpNode node, Equip weapon, WeaponType wt, MapDamageProfile mob) {
         int weaponRank = weaponPreferenceRank(bot, weapon, wt);
+        int hpGoal=BotPinkBeanEquipment.hpGoal(bot);
+        int gearHp=node.hp+(weapon==null?0:weapon.getHp());
+        if(hpGoal>gearHp)return new EquipScore(weaponRank,gearHp-hpGoal,node.statSum);
         if (isMageJob(node.snap.job())) {
             return new EquipScore(weaponRank, magicScore(node.snap), node.statSum);
         }
         if (wt == null) return new EquipScore(weaponRank, 0, node.statSum);
         int dmg = damageWith(node.snap, null, wt, mob);
-        int cycleMs = weapon != null ? weaponCycleMs(weapon.getItemId()) : 0;
+        int cycleMs = weapon != null ? BotHorntailEquipment.attackCycle(bot, weapon.getItemId()) : 0;
         if (cycleMs > 0) dmg = (int) (dmg * 1000.0 / cycleMs);
         return new EquipScore(weaponRank, dmg, node.statSum);
     }
@@ -2163,7 +2180,7 @@ class BotEquipManager {
                 if (w == null) continue;
                 cands.add(new WeaponCand(reqStat(ii, w.getItemId(), secondaryCode),
                         watkNoWeapon + w.getWatk(), ii.getWeaponType(w.getItemId()),
-                        weaponCycleMs(w.getItemId())));
+                        BotHorntailEquipment.attackCycle(bot, w.getItemId())));
             }
             int equippedReqSec = equipped != null ? reqStat(ii, equipped.getItemId(), secondaryCode) : 0;
 
@@ -2710,6 +2727,10 @@ class BotEquipManager {
         for (int i = 0; i < n; i++) {
             Equip a = items.get(i);
             boolean dominated = false;
+            // An HP-prepared raid can wear four distinct rings. One superior
+            // ring does not make the other three physical copies redundant.
+            int neededDominators=reqRel!=null&&reqRel.length>4&&reqRel[4]&&a.getItemId()/10000==111?4:1;
+            int dominators=0;
             for (int j = 0; j < n; j++) {
                 if (i == j) continue;
                 Equip b = items.get(j);
@@ -2718,7 +2739,7 @@ class BotEquipManager {
                 if (ii.getWeaponType(a.getItemId()) != ii.getWeaponType(b.getItemId())) continue;
                 if (!dedupDominatesPre(vecs[j], vecs[i], tiebreak[j], tiebreak[i])) continue;
                 if (!reqsAtLeastAsEasy(ii, b, a)) continue;
-                dominated = true; break;
+                if (++dominators>=neededDominators) { dominated = true; break; }
             }
             if (!dominated) kept.add(a);
         }
@@ -2812,6 +2833,7 @@ class BotEquipManager {
         int count = (primaryIdx >= 0 ? 1 : 0) + 1 /* watk or magic */
                 + (accRelevant ? 1 : 0);
         for (boolean b : reqDim) if (b) count++;
+        if(reqRel!=null&&reqRel.length>4&&reqRel[4])count++;
         int[] v = new int[count];
         int k = 0;
         int primary = primaryIdx >= 0 ? statByIdx(e, primaryIdx) : 0;
@@ -2823,6 +2845,7 @@ class BotEquipManager {
         for (int i = 0; i < 4; i++) {
             if (reqDim[i]) v[k++] = statByIdx(e, i);
         }
+        if(reqRel!=null&&reqRel.length>4&&reqRel[4])v[k++]=e.getHp();
         return v;
     }
 

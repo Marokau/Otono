@@ -4,7 +4,7 @@ import client.Character;
 import client.Disease;
 import java.util.*;
 
-/** Give each active curable ailment three visible seconds before using an All Cure. */
+/** Keep curable ailments visible before All Cure: one second in Pink Bean, three elsewhere. */
 final class BotPqCureDelay {
     private static final Map<Character, EnumMap<Disease,Long>> SEEN = new WeakHashMap<>();
     private BotPqCureDelay() {}
@@ -20,6 +20,6 @@ final class BotPqCureDelay {
             } else seen.remove(disease);
         }
         if (seen.isEmpty()) { SEEN.remove(bot); return false; }
-        return now - latest >= 3000;
+        return now - latest >= (BotPinkBeanRun.inInstance(bot) ? 1000 : 3000);
     }
 }

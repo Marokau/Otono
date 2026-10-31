@@ -588,7 +588,7 @@ var tourParties = [
     ["Guild PQ",1,255,6,30,101030104,9040000,"Gather your guild at the Sharenian excavation entrance. Coordinate the puzzles, specialist roles and Ergoth battle. Guild and role requirements still apply."],
     ["Crimsonwood Keep PQ",90,255,6,30,610030020,9201113,"Register a multi-class expedition for Crimsonwood Keep's trials and bosses. Coordinate the class-specific objectives; follow the entrance NPC's expedition requirements."],
     ["MV's Lair PQ",140,255,4,6,674030100,9220018,"Talk to Charles to assemble a dedicated bot crew. Collect 15 Secret Letters, check with the upper-left guide, and gather at the tunnel before fighting MV. Boss loot moves on after ten seconds, followed by a ten-minute treasure room."],
-    ["Horntail Trial PQ",120,255,6,6,240050000,2083001,"Complete the six-player Horntail trial through the cave's normal stages. This is separate from the Horntail expedition listed on the Expeditions page."],
+    ["Horntail Trial PQ",120,255,6,6,240050000,2083001,"Complete the six-player trial with five dedicated level-180 companions. Your own cave prerequisites still apply. Lead the normal key hand-ins; assemble again at the raid NPC afterward to expand to twelve participants."],
     ["Boss Rush PQ",1,255,1,6,970030000,9000037,"Challenge the local Boss Rush sequence alone or with a party. Speak to the coordinator for the available challenge and its timer."],
     ["Cafe PQ",21,120,3,6,193000000,1052013,"Choose among the six Cafe PQ variants at this entrance. Defeat the assigned monsters, collect the requested coupons and let the leader turn them in."],
     ["Holiday PQ: 21-30",21,30,3,6,889100000,9105004,"A Maplemas party challenge for this level bracket. Follow the coordinator's requirements; seasonal context and normal entry conditions apply."],
@@ -603,15 +603,15 @@ var tourParties = [
 
 var tourExpeditions = [
     ["Zakum",50,255,6,30,211042400,2030013,"Complete your own Zakum prerequisites and speak to Adobis to register the expedition. Enter normally and use an Eye of Fire when the party is ready. A dedicated bot crew can be assembled here."],
-    ["Horntail",100,255,6,30,240050400,2083004,"Register the Horntail expedition through the cave's NPC. Meet the normal quest and entry requirements, then tackle the heads and main body."],
-    ["Pink Bean",120,255,6,30,270050000,2141001,"Prepare the Temple of Time prerequisites and required entry items. Register through the NPC and complete the statue phases before Pink Bean."],
+    ["Horntail",100,255,6,30,240050400,2083004,"Assemble eleven dedicated level-180 companions in two parties, then register and start the normal expedition. Your own cave prerequisites still apply. Each party has a Bishop and Dark Knight. The crew waits for your portals and main-chamber crystal."],
+    ["Pink Bean",120,255,6,30,270050000,2141001,"Prepare your own Temple of Time prerequisites and Marble of Chaos. The Forgotten Temple Manager can assemble twenty-three level-180 companions in four parties. Register normally and fight five statue waves before Pink Bean within the 60-minute limit. Player testing of this larger crew is still pending."],
     ["Balrog",50,255,6,30,105100100,1061014,"Register the normal Balrog expedition at the temple entrance. This guide does not offer the unreferenced Easy Balrog event or bypass its normal entry conditions."],
     ["Scarlion and Targa",100,255,6,30,551030100,9270047,"Register the Malaysia expedition through the entrance NPC. Bring the required quest progress and summoning items for Scarlion and Targa."],
     ["Showa Boss",100,255,3,30,801040004,9120201,"Register the Showa boss expedition through the local NPC. Follow the normal entry requirements and encounter progression."],
     ["Papulatus",1,255,1,6,220080000,0,"Enter the Clocktower boss encounter through the normal portal with your party. Complete the required quest preparations and bring the summoning piece. The local event's broad level range does not bypass quest requirements."],
     ["Captain Latanica",1,255,1,6,541010060,0,"Enter through the Ghost Ship's normal boss portal with an eligible party. Follow the local quest and access requirements; this is an instanced boss battle rather than an expedition registration NPC."]
 ];
-var companionActivities = {"Kerning PQ":true,"Ludibrium PQ":true,"Carnival PQ":true,"Carnival PQ 2":true,"Ellin Forest PQ":true,"Orbis PQ":true,"Ludibrium Maze PQ":true,"Magatia PQ":true,"MV's Lair PQ":true,"Guild PQ":true,"Zakum":true};
+var companionActivities = {"Kerning PQ":true,"Ludibrium PQ":true,"Carnival PQ":true,"Carnival PQ 2":true,"Ellin Forest PQ":true,"Orbis PQ":true,"Ludibrium Maze PQ":true,"Magatia PQ":true,"MV's Lair PQ":true,"Guild PQ":true,"Zakum":true,"Horntail Trial PQ":true,"Horntail":true,"Pink Bean":true};
 function chapterFor(level) {
     for (var i = 0; i < tourChapters.length; i++) if (level <= tourChapters[i][1]) return i;
     return tourChapters.length - 1;

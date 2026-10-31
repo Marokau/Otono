@@ -30,6 +30,14 @@ public final class BotLootEligibility {
             return false;
         }
 
+        if (BotPinkBeanRun.inInstance(bot) && BotPinkBeanRun.crew(bot)!=null) {
+            // The invisible native stage item belongs to the reactor, never a loot scan.
+            if (drop.getItemId()==4001193 || !drop.isPlayerDrop()) return false;
+        }
+        if (BotHorntailRun.inInstance(bot) && BotHorntailRun.belongsTo(bot, entry.owner == null ? -1 : entry.owner.getId())) {
+            if (bot.getMapId() >= 240060000 && !drop.isPlayerDrop()) return false;
+            if (drop.getItemId() >= 4001087 && drop.getItemId() <= 4001093) return false;
+        }
         if (BotMvpqRun.inInstance(bot) && BotMvpqRun.belongsTo(bot, entry.owner == null ? -1 : entry.owner.getId())) {
             if (drop.getItemId() == BotMvpqRun.LETTER || bot.getMapId() == BotMvpqRun.BONUS) return false;
             if (bot.getMapId() == BotMvpqRun.BOSS && !drop.isPlayerDrop()) return false;

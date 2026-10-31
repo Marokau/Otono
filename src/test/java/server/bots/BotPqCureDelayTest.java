@@ -21,4 +21,16 @@ class BotPqCureDelayTest {
   var b=mock(Character.class);when(b.getDiseasesSize()).thenReturn(1);when(b.hasDisease(Disease.STUN)).thenReturn(true);
   assertFalse(BotPqCureDelay.ready(b,1000));assertFalse(BotPqCureDelay.ready(b,5000));
  }
+ @Test void pinkBeanWaitsOneSecondAndEachNewCurableAilmentStartsItsOwnWindow() {
+  var b=mock(Character.class);when(b.getDiseasesSize()).thenReturn(1);when(b.hasDisease(Disease.SEAL)).thenReturn(true);
+  try(var pink=mockStatic(BotPinkBeanRun.class)) {
+   pink.when(()->BotPinkBeanRun.inInstance(b)).thenReturn(true);
+   assertFalse(BotPqCureDelay.ready(b,1000));assertFalse(BotPqCureDelay.ready(b,1999));assertTrue(BotPqCureDelay.ready(b,2000));
+   when(b.hasDisease(Disease.CURSE)).thenReturn(true);
+   assertFalse(BotPqCureDelay.ready(b,2100));assertFalse(BotPqCureDelay.ready(b,3099));assertTrue(BotPqCureDelay.ready(b,3100));
+   when(b.getDiseasesSize()).thenReturn(0);assertFalse(BotPqCureDelay.ready(b,3200));
+   when(b.getDiseasesSize()).thenReturn(1);when(b.hasDisease(Disease.CURSE)).thenReturn(false);
+   assertFalse(BotPqCureDelay.ready(b,4000));assertTrue(BotPqCureDelay.ready(b,5000));
+  }
+ }
 }

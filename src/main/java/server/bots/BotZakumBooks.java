@@ -13,8 +13,10 @@ final class BotZakumBooks {
     static void prepare(Character bot) {
         var entry=BotManager.getInstance().getEntryByBotCharId(bot.getId());
         if(entry==null||bot.getEventInstance()!=null)throw new IllegalArgumentException("Prepare books before entering");
-        if(bot.getJob()==Job.HERO)entry.spVariant="2h";
-        if(bot.getJob()==Job.BISHOP)entry.spVariant="boss-support";
+        if(!BotHorntailRaidBuild.VARIANT.equals(entry.spVariant)) {
+            if(bot.getJob()==Job.HERO)entry.spVariant="2h";
+            if(bot.getJob()==Job.BISHOP)entry.spVariant="boss-support";
+        }
         // These dedicated fixtures also receive their skill-quest unlocks. NPCs such as
         // 2081200/2081300 use teachSkill(..., 0, 10, -1); actual SP still comes from leveling.
         // Only the bot's own planned fourth-job skills receive the initial cap, never free SP.
