@@ -965,6 +965,7 @@ public class BotManager {
     private void updateLod(BotEntry entry, Character bot) {
         BotEntry.Lod prev = entry.lod;
         boolean lod0Now = forcedLod0Maps.contains(bot.getMapId())
+                || BotCwkpqCrew.belongsTo(bot, entry.ownerCharId)
                 || BotMvpqRun.belongsTo(bot, entry.ownerCharId) || (BotHorntailRun.belongsTo(bot, entry.ownerCharId) || BotPinkBeanRun.belongsTo(bot, entry.ownerCharId))
                 || BotGuildCompanions.belongsTo(bot, entry.ownerCharId)
                 || BotKpqRun.inInstance(bot)
@@ -4302,6 +4303,9 @@ public class BotManager {
         // idle path below returns before respawn can fire.
         if (handleDeadTick(entry, bot, owner)) {
             return;
+        }
+        if (owner == null && BotCwkpqCrew.belongsTo(bot, ownerCharId)) {
+            groundAfterMapChange(entry, bot); BotCwkpqCrew.tick(entry, bot, runAiTick); return;
         }
         if (owner == null && BotPinkBeanRun.belongsTo(bot, ownerCharId)) {
             groundAfterMapChange(entry, bot); BotPinkBeanRun.tick(entry, bot, runAiTick); return;

@@ -745,7 +745,9 @@ class BotCombatManager {
             if (level > 0) castSupportSkill(entry, bot, skill, skill.getEffect(level), System.currentTimeMillis());
             return;
         }
-        if (!entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) {
+        boolean crimsonwood = bot.getEventInstance() != null
+                && bot.getMapId() >= 610030100 && bot.getMapId() <= 610030800;
+        if (!crimsonwood && !entry.following && !entry.grinding && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotCarnivalRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotZakumBattle.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))) {
             noteSkillBuffDecision(entry, "idle (not following or grinding)");
             return;
         }
@@ -1258,8 +1260,17 @@ class BotCombatManager {
                     || BotPinkBeanRun.inInstance(bot)&&BotPinkBeanStrategy.targets(bot,List.of(target)).isEmpty()) return null;
             if (bot.getJob() == client.Job.NIGHTLORD
                     && (BotZakumBattle.inInstance(bot) && BotZakumCombat.isZakum(target.getId())
-                        || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)) && BotHorntailCombat.part(target.getId())) && bot.getSkillLevel(NightLord.TRIPLE_THROW) > 0)
+                        || (BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)) && BotHorntailCombat.part(target.getId())
+                        || BotCwkpqAttacks.inInstance(bot) && bot.getMapId() == 610030600)
+                    && bot.getSkillLevel(NightLord.TRIPLE_THROW) > 0)
                 return BotZakumArmLanes.filter(bot, planSkillAttack(entry, bot, target, NightLord.TRIPLE_THROW));
+            // Use a real Hurricane stance for CWKPQ guardians and Masters.
+            // The chamber's generic scoring used Strafe's animation timing.
+            if (bot.getEventInstance() != null
+                    && (bot.getMapId() == 610030540 && target.getId() == 9400594
+                        || bot.getMapId() == 610030600 && target.getId() >= 9400590 && target.getId() <= 9400593)
+                    && bot.getJob() == client.Job.BOWMASTER && bot.getSkillLevel(Bowmaster.HURRICANE) > 0)
+                return planSkillAttack(entry, bot, target, Bowmaster.HURRICANE);
             if (BotPinkBeanRun.inInstance(bot) && BotPinkBeanRun.boss(target.getId())) {
                 if (bot.getJob() == client.Job.BOWMASTER) {
                     var hurricane=planSkillAttack(entry,bot,target,Bowmaster.HURRICANE);
@@ -1767,7 +1778,8 @@ class BotCombatManager {
         // Held raid Hurricane owns its next-shot deadline; rounding a fresh 120ms
         // action lock to 50ms ticks on every shot would silently slow it to 150ms.
         boolean heldHurricane=attackPlan.skillId==Bowmaster.HURRICANE
-                &&(BotZakumBattle.inInstance(bot)||BotHorntailRun.inInstance(bot)||BotPinkBeanRun.inInstance(bot));
+                && (BotZakumBattle.inInstance(bot) || BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)
+                || bot.getEventInstance() != null && (bot.getMapId() == 610030540 || bot.getMapId() == 610030600));
         if(!heldHurricane)entry.attackCooldownMs = Math.max(entry.attackCooldownMs, attackPlan.cooldownMs);
         String result = hpBefore >= 0 && hpAfter == hpBefore && plannedDamage > 0 ? "sent:no-hp-change" : "sent";
         recordAttackExec(entry, attackPlan, primary, result, plannedDamage, hpBefore, hpAfter, mpBefore, mpAfter);
@@ -1903,7 +1915,7 @@ class BotCombatManager {
         }
 
         StatEffect effect = skill.getEffect(skillLevel);
-        if (!effect.canPaySkillCost(bot)) {
+        if (!canUseSkill(bot, skillId, skillLevel)) {
             return null;
         }
         // Boss crews carry a finite potion load and cannot shop inside the altar.
@@ -2875,7 +2887,7 @@ class BotCombatManager {
                 continue;
             }
             StatEffect effect = skill.getEffect(lvl);
-            if (effect == null || !effect.canPaySkillCost(bot)
+            if (effect == null || !canUseSkill(bot, skillId, lvl)
                     || !canUseAttackSkillWithWeapon(skillId, weaponType)) {
                 continue;
             }
@@ -3560,7 +3572,18 @@ class BotCombatManager {
             return false;
         }
 
-        return skill.getEffect(skillLevel).canPaySkillCost(bot);
+        // These are client-side pirate prerequisites, beyond MP/HP costs.
+        boolean ready = switch (skillId) {
+            case constants.skills.Buccaneer.DEMOLITION, constants.skills.Buccaneer.SNATCH ->
+                    bot.hasActiveBuff(constants.skills.Buccaneer.SUPER_TRANSFORMATION);
+            case constants.skills.Marauder.SHOCKWAVE ->
+                    bot.hasActiveBuff(constants.skills.Marauder.TRANSFORMATION)
+                            || bot.hasActiveBuff(constants.skills.Buccaneer.SUPER_TRANSFORMATION);
+            case constants.skills.Marauder.ENERGY_BLAST, constants.skills.Marauder.ENERGY_DRAIN,
+                    constants.skills.Buccaneer.ENERGY_ORB -> bot.getEnergyBar() >= 10000;
+            default -> true;
+        };
+        return ready && skill.getEffect(skillLevel).canPaySkillCost(bot);
     }
 
     /** Returns true if the bot's weapon type requires projectile ammo. */

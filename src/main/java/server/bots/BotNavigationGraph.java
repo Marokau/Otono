@@ -1032,16 +1032,17 @@ final class BotNavigationGraph implements Serializable {
     }
 
     int findRopeRegionId(Point position) {
+        int nearest = -1;
+        int nearestDistance = BotPhysicsEngine.cfg.ROPE_GRAB_X + 1;
         for (Region region : regions) {
-            if (!region.isRopeRegion) {
-                continue;
-            }
-            if (Math.abs(position.x - region.minX) <= BotPhysicsEngine.cfg.ROPE_GRAB_X
-                    && position.y >= region.minY
-                    && position.y <= region.maxY) {
-                return region.id;
+            if (!region.isRopeRegion || position.y < region.minY || position.y > region.maxY) continue;
+            int distance = Math.abs(position.x - region.minX);
+            if (distance < nearestDistance) {
+                nearest = region.id;
+                nearestDistance = distance;
+                if (distance == 0) break;
             }
         }
-        return -1;
+        return nearest;
     }
 }

@@ -25,7 +25,7 @@ Latest acceptance update: Zakum twelve-participant human-led audit, October 22, 
 | Lord Pirate | 55-100 | [2094000](../scripts/npc/2094000.js), PiratePQ | No |
 | Magatia / Romeo and Juliet | 71-85 | [2112003](../scripts/npc/2112003.js), [2112004](../scripts/npc/2112004.js), MagatiaPQ_A/Z | Yes; owner verified human-led completion and poison-fog tick damage, 2026-10-21 |
 | Sharenian Guild PQ | 1-255; special roles apply | [9040000](../scripts/npc/9040000.js), GuildQuest | Yes; two full bot-only clears through native rewards/exit, 2026-10-24; same-crew reuse/resupply verified; human-client accepted 2026-10-25, with Ergoth survivability caveat; latest protection changes await a repeat client boss audit |
-| Crimsonwood Keep PQ | 90-255 | [9201113](../scripts/npc/9201113.js), CWKPQ | No |
+| Crimsonwood Keep PQ | 90-255 | [9201113](../scripts/npc/9201113.js), CWKPQ | Headless full clear verified with seventeen level-140-prepared bots and a passive leader in about 54 minutes. Includes all class offerings, four Masters, bonus treasure and cleanup. Human-client verified November 12: the player completed the audit and defeated the bosses. |
 | MV's Lair PQ | 140-255 | [9220018](../scripts/npc/9220018.js), TreasurePQ | Yes; mixed-class bot-only clear through real treasure pickups and normal exit, 2026-10-24; Beginner movement and human-led waiting tested; human-client verified 2026-10-25 |
 
 Level ranges are this fork's script values, not remembered official-server ranges.

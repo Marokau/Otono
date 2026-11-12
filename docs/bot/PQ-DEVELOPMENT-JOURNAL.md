@@ -2255,3 +2255,255 @@ I wanted to conserve weekly usage while leaving Pink Bean running in my client. 
 
 ### Pink Bean's last-second human-client clear (October 31, 2026)
 I left the client running with the 29-bot Night Lord-heavy crew and returned for the finish. I reported the kill with about three seconds left; the server's native CLEAR record independently gives 3,593 seconds after the audit start (59m53s), four aggregate participant deaths and 29 participants alive. The screenshot captures six seconds remaining immediately before the finish, rather than the kill itself. The native timer and server logging start can differ slightly from the displayed countdown. This is a human-client verified completion, not proof of repeatability or the desired 50-minute margin. The four deaths include human and bot deaths; the aggregate log does not split them. The revised crew can complete with the human present without requiring a matched player damage test. We should not claim zero human damage from this log, which does not record per-character damage.
+
+### Crimsonwood Keep registration and first hallway (November 10, 2026)
+
+The requested crew starts at level 115 with ordinary class gear. Jack assembles
+two of each class family into two parties and uses the native expedition to
+register them. One companion opens the hidden passage and the rest enter Stage
+Two through the normal portal.
+
+The first headless attempt that entered the quest brought all ten companions
+to Stage Two in 32.6 seconds. A repeat reused the saved crew and finished in
+31.8 seconds with normal movement fidelity provided by the crew itself.
+Jack registered all eleven participants on both runs. The last check found
+zero test fixtures online after the test leader disconnected. Sigil automation
+and the human-client audit are still pending.
+
+
+### Level 130 crew and four Crimsonwood offerings (November 10, 2026)
+
+Chapter 18 of the recovered MapleStory PQ summaries established the role of
+max Haste in the menhir course, five upper portal crossings and the weapon
+handoffs. Otono keeps its native four-boss encounter, map gates and timers.
+The saved ten companions advanced normally to level 130 and fourth job.
+Their gear still comes from ordinary shops and monster drops.
+
+Sigil sprites are about 106 pixels above their standing platforms. Using the
+actual foothold, native skill casts and the shared ammo count fixed the
+activation failures. Concurrent reactor scripts could lose an increment,
+so CWKPQ uses an atomic event counter. The warrior room has two ropes one
+pixel apart. Choosing the nearest rope preserves the actual attachment.
+The mage and thief rooms use their learned movement skills, with normal
+field and MP rules. The warrior, mage and archer pairs can fight together.
+Thieves submit after breaking all five eyes. The pirate opens the original
+chest. Weapon carriers walk to footholds inside the actual drop rectangles.
+
+The final headless trial registered all eleven and reached Stage Five in
+about 2 minutes 40 seconds. Four native offerings counted. The two archers
+cleared one Master Guardian and were close to clearing a second when the
+late sample showed 21.17 million HP remaining. At the sampled pace of about
+20,000 damage per second the room would exceed its existing timer. The run
+ended at about 16 minutes overall through native leader logout. All fixtures
+went offline and the server remained available. The boss and bonus paths
+have not been verified. The final build and 116 focused shared regressions
+passed.
+
+### Scrolled level-140 crews and a full Crimsonwood clear (November 10, 2026)
+
+I asked for ordinary scrolled equipment and a level-140 crew to finish the
+Keep. The existing fixtures advanced through normal leveling and received
+attack scrolls through the real handler. Weapon and glove attempts could
+fail and consumed their upgrade slots. The two Bowmasters' different results
+made that visible in the server logs.
+
+Two archers still lacked the damage margin for the five seven-million-HP
+Master Guardians. A third Bowmaster filled the second party's open slot.
+That crew restored all five weapons. Along the way, we found two movement
+and interaction problems. The mages parked against a nearly vertical
+foothold on their way to the class portal, so they now jump it. Lockewood's
+NPC origin was 121 pixels above his own foothold, just beyond the previous
+120-pixel approach tolerance. A 130-pixel tolerance let the archers talk to
+him from the platform and collect the bow normally.
+
+The Twisted Masters exposed a larger preparation gap. Fourth-job skill
+books had been omitted, leaving considerable earned SP unspent. The shared
+raid book routine resolved the unlocks and mastery caps through native
+books and success rolls. The level-140 Night Lords could then use Triple
+Throw 30, and the Bowmasters reached Hurricane 21 and Sharp Eyes 29.
+Preparation now happens before entry. Potions, cures, rocks and Ilbis are
+resupplied for each attempt, with fresh companion cooldowns.
+
+The twelve-person attempt survived but timed out on Hsalf. His native
+8,000 weapon defense reduced the Bowmasters to minimum damage. Moving them
+into Hurricane range corrected their distant Dragon's Breath behavior,
+but the class damage measurements showed why positioning alone could not
+solve the final wall.
+
+The retry used eighteen participants, within the supplied guide's 10–20
+range. Existing companions were reused, with additional support and damage
+roles filling three parties. A Fire/Poison Archmage and an Ice/Lightning
+Archmage worked on Hsalf from the start while the physical attackers dealt
+with the other Masters. Four focused regression checks cover those CWKPQ
+assignments, including their scope to this encounter and the physical
+attackers helping finish the last Master.
+
+The fresh run cleared every native stage and all four Twisted Masters in
+about 54 minutes from entry. The boss room took approximately 42 minutes.
+All seventeen companions and the passive leader had zero recorded deaths.
+The treasure boxes opened normally, and the leader made 63 pickups,
+including equipment, with 9,925 mesos gained during the bonus visit. The
+normal exit and bonus timer completed, and the dedicated crew saved and
+logged off. The dashboard confirmed zero CWKPq characters online.
+
+The packaged build and 32 focused checks passed. The next verification is
+a human-client audit of the full route and fight.
+
+### CWKPQ guidance reaches the player and archers use Hurricane (November 12, 2026)
+
+During my client audit, Stage Two had no explanation, the Test of Wit gave
+me no context, and the Test of Unity left me relying on the Master Thief's
+NPC dialogue. Other class rooms finished while the archers were still busy.
+
+The old CWKPQ controller consumed its one announcement when the first bot
+entered a stage. A scout could therefore speak before I arrived, or queue a
+message that expired after changing maps, while the shared announcement flag
+prevented another explanation.
+
+CWKPQ now uses the existing shared stage guide and reading pause. A crew
+arriving ahead waits at the next main stage until the leader arrives. The
+briefing explains the objective, the companions' tasks and my next action.
+The existing stage controllers share the announcement state to avoid duplicate
+speeches. Companions catching up after the leader advances can still follow,
+and class chambers continue their own tasks.
+
+The Unity briefing explains that five class weapons restore the matching
+parts of the statue. I can help in my class's room or wait in the main hall,
+then take the center portal once all five offerings are complete. It also
+explains the archer room's five guardians and their longer fight.
+
+Live dashboard inspection showed the level-140 archers had Hurricane 21 but
+were selecting Strafe in the chamber. Their native guardians total 35 million
+HP. The CWKPQ Hurricane policy now covers those chamber guardians as well as
+the Masters, using the existing range, cost and held-skill attack paths.
+
+The package and 206 focused checks passed, including a regression for an
+early scout, delayed human arrival, one briefing across companions and a fresh
+instance. The changes were installed in the running audit. The new Stage Six
+briefing was observed in the live map chat. The human had already reached the
+boss room, so the earlier briefings and chamber Hurricane still need client
+confirmation on another entry.
+
+### The Battle Statue and starter stars ahead of Ilbis (November 12, 2026)
+
+In the Grandmaster Council Hall, the crew told me to talk to Jack, but the
+actual NPC on the far right is named Battle Statue. The handbook confirms
+9201115 under that name. Both the shared stage briefing and the CWKPQ
+controller now identify the Battle Statue and its location.
+
+I also noticed Subi-like stars on the level-140 thieves. Their inventories
+already contained 12,000 Ilbis each. The native ranged handler selects the
+first eligible inventory stack, and a live check found item 2070015,
+A Beginner Thief's Throwing Stars, ahead of those Ilbis. Those starter stars
+have +15 attack, matching Subis, while the prepared Ilbis have +27.
+
+CWKPQ resupply now removes both starter star types before stocking Ilbis.
+The first live cleanup of Subis alone left 2070015 selected, which confirmed
+why the cleanup must cover both IDs. After the correction, all four active
+thieves changed from 2070015 to Ilbi 2070006 as their first eligible stack,
+with 12,000 Ilbis available each. Future assembly and retry preparation use
+the same correction.
+
+The wording and inventory changes were installed during the active audit.
+Native inventory handling performed the removals and restock. Focused guide,
+supply and boss-assignment checks and the packaged build verify the change;
+the player's ongoing client audit remains the visual confirmation.
+
+### CWKPQ client-observed attacks were missing (November 12, 2026)
+
+I noticed the companions were not visibly stunned in the Council Hall and
+asked whether CWKPQ reused the attack-observer work from Zakum and Horntail.
+
+The common All Cure delay and poison-cloud tick handling existed, but CWKPQ
+was absent from three incoming-attack integration gates. BotClient did not
+forward its monster-movement packets to the observer, the observer did not
+accept or retain CWKPQ casts, and the headless-controller broadcast path did
+not preserve those packets for this event.
+
+BotCwkpqAttacks now supplies a shared event/map gate for the native CWKPQ
+instance. Its monsters use the existing WZ area and delay reader, collision
+checks, damage rolls, TakeDamageHandler, status application and recoil.
+Guardian waves and class-room monsters participate through the same gate.
+Rellik's jumpAttack flag uses the existing ground-only avoidance rule.
+
+The installed data identifies Red Nirg attack two and Rellik attack three
+as native stun hits. Margana and Rellik also have poison attacks; Rellik's
+lightning applies Seal. Tests cover forwarding, preserved broadcast packets,
+queued native attacks and Red Nirg's actual player-handler stun/damage path.
+The 32 focused hazard, observer, poison and cure-delay checks passed.
+
+The fix was installed during the ongoing client audit. The first sample
+observed Seal on five companions and subsequent clearing. The second
+45-second sample observed live STUN, POISON and SEAL, including simultaneous
+stun/poison and stun/seal states, followed by recovery. The sample contained
+1,084 stunned bot observations and 899 poisoned bot observations, which are
+repeated samples rather than unique hits.
+
+The earlier November 10 headless clear established stage progression and
+rewards, but its zero-death result did not exercise these missing
+client-observed attacks. Full fight survivability must be assessed with
+the corrected attack path.
+
+### Council Hall Triple Throw and Buccaneer skill states (November 12, 2026)
+
+I noticed the pirates' intermittent yellow dragon and a blue charging-looking
+effect, and asked whether their animations were stuck. I also preferred
+Triple Throw over Avenger in the Council Hall.
+
+A live execution sample confirmed the Buccaneers were landing damage.
+Dragon Strike (5121001) produced the yellow dragon. Their native energy
+meters were advancing and some were fully charged, so an energy aura can
+account for a persistent effect. The exact blue client visual has not been
+identified from a recording.
+
+The sample also found actual Snatch attacks with no transformation active.
+The installed skill data requires Super Transformation for Snatch and
+Demolition, while these companions had Super Transformation level zero.
+The bot skill check previously validated costs alone.
+
+The shared bot skill gate now checks Super Transformation for Snatch and
+Demolition, either pirate transformation for Shockwave, and a fully charged
+native energy meter for Energy Blast, Energy Drain and Energy Orb. Planning,
+reposition estimates and final attack dispatch reuse this same gate.
+Ordinary Dragon Strike and Barrage retain their normal requirements.
+
+Night Lords now prefer their learned Triple Throw against Council Hall
+targets, including the guardian waves and Masters. The earlier sigil stages
+continue to use their required class skills.
+
+Focused tests cover transformation eligibility, energy thresholds and normal
+attack costs alongside the existing combat, attack-data, manager and CWKPQ
+targeting suites. The changes were installed during the active audit, with
+a new execution sample checking the resulting pirate and thief attacks.
+
+The post-installation sample recorded all four Night Lords sending Triple
+Throw and the three Buccaneers sending valid Dragon Strike attacks with
+actual target HP loss. It contained no untransformed Demolition or Snatch
+sends. The package and 203 focused checks passed.
+
+### Council Hall completion points to the bonus room (November 12, 2026)
+
+I wanted the crew to explain the next action when the Council Hall fight
+ended. The entry briefing did not replace a reminder after a long boss
+fight.
+
+The final-wave controller now queues one ordinary bot message after the
+Masters and remaining monsters are defeated while the leader is still in
+the Council Hall. It directs me to the Battle Statue on the far right to
+confirm the clear, then through the far-right door toward the bonus room,
+and reminds me to collect boss loot first. Its completion key is separate
+from the entry briefing and resets with the normal crew stage state.
+
+### November 12: Keep CWKPQ boss loot for the player
+
+The client audit raised whether Mark of Naricain can drop and whether rewards expire. The installed database lists Mark of Naricain (1122059) for Margana, Red Nirg, Rellik and Hsalf. Dedicated human-led crews already reserve original boss drops for the human; the missing protection was ground-item expiry.
+
+Original boss drops in the instanced Grandmaster Council Hall now survive the normal expiry sweep, including after stage clear, until collected or the instance is disposed. Player redrops retain normal behavior. The change was built, eight focused expiry/reservation tests passed, and the policy was reloaded into the running server without restarting the audit. This does not guarantee a pendant drop or recreate loot that already expired.
+
+### November 12: Leave all CWKPQ bonus-room drops for the player
+
+The audit clarified that every bonus-room drop belongs to the human, including mesos and player-redropped items. The shared bot pickup eligibility now rejects all drops in the instanced CWKPQ bonus map (610030800). Companions still use their existing chest-breaking behavior. Seven focused loot-eligibility tests passed, and the method change was installed live without restarting the server.
+
+### November 12: CWKPQ accepted after the human-client audit
+
+I confirmed that the CWKPQ audit was complete and that we defeated the bosses. This establishes human-client acceptance alongside the earlier full bot-only route clear. The audit produced fixes for stage explanations, Battle Statue directions, starter stars, pirate skill prerequisites, native boss hazards and player loot protection. Automated checks cover those changes; the earlier headless zero-death result predates the hazard integration and should not be presented as a death-free result for the final version.

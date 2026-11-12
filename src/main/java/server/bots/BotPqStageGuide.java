@@ -30,6 +30,16 @@ final class BotPqStageGuide {
         return now<until;
     }
     static String text(String activity,int map) {
+        if(activity.equals("cwkpq"))return switch(map) {
+            case 610030100 -> "Stage One: We will open the hidden passage at the far right. Once it opens, take the portal partway back on the right.";
+            case 610030200 -> "Stage Two: We will strike the five class sigils with our class skills. You can help activate your class's sigil or follow us. Take the right portal once all five are activated.";
+            case 610030300 -> "Stage Three: Test of Agility. We will activate five sigils and send five companions through the top portal. Avoid the moving pillars. Once the course is clear, take the bottom exit.";
+            case 610030400 -> "Stage Four: Test of Wit. We will climb the platforms to find and activate the five class sigils. You can help with your class's sigil or wait below. Take the bottom portal when all five are activated.";
+            case 610030500 -> "Stage Five: Test of Unity. Each class retrieves a weapon from its room and returns it to the matching part of the statue. We will handle these offerings. You can help in your class's room or wait here. Archers must defeat five tough guardians, so their room takes longer. Use the center portal after all five weapons are restored.";
+            case 610030600 -> "Stage Six: Speak to the Battle Statue on the far right to start each wave and confirm the clear. Our damage mages will focus on Hsalf's heavy armor while the physical attackers handle the other Masters. You can help fight. The boss loot is yours.";
+            case 610030700 -> "The Twisted Masters are defeated. Enter the bonus portal on the right before leaving. We will help open the treasure boxes; pick up the rewards you want.";
+            default -> null;
+        };
         if(activity.equals("opq"))return switch(map) {
             case 920010000 -> "Entrance: We will break clouds, collect 20 pieces and use them to summon Eak. Stay here or help break clouds, then speak to Eak when we are ready.";
             case 920010100 -> "Center Tower: We will recover six statue pieces from the side rooms and place them on Minerva's statue. Follow our room announcements; you make the NPC checks and bring any awarded pieces back here.";

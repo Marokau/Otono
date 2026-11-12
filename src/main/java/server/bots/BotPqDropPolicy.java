@@ -10,6 +10,11 @@ public final class BotPqDropPolicy {
     private BotPqDropPolicy() {}
 
     public static boolean keepsForHandoff(MapleMap map, MapItem drop) {
+        // Original Council Hall boss loot remains available through the post-clear handoff.
+        if (map.getId() == 610030600 && map.getEventInstance() != null
+                && !drop.isPlayerDrop()
+                && drop.getDropper() instanceof server.life.Monster monster && monster.isBoss()) return true;
+
         if(map.getId()==BotPinkBeanRun.ARENA && drop.getItemId()==4001193){
             var event=map.getEventInstance();
             if(event!=null&&!event.isEventCleared())

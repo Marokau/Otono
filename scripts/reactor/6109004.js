@@ -5,8 +5,8 @@ function act() {
 
         if (mapId == 610030200) {
             eim.dropMessage(6, "The Pirate Sigil has been activated!");
-            eim.setIntProperty("glpq2", eim.getIntProperty("glpq2") + 1);
-            if (eim.getIntProperty("glpq2") == 5) { //all 5 done
+            var activated = eim.incrementIntProperty("glpq2");
+            if (activated == 5) { //all 5 done
                 eim.dropMessage(6, "The Antellion grants you access to the next portal! Proceed!");
 
                 eim.showClearEffect(mapId, "2pt", 2);
@@ -14,9 +14,9 @@ function act() {
             }
         } else if (mapId == 610030300) {
             eim.dropMessage(6, "The Pirate Sigil has been activated! You hear gears turning! The Menhir Defense System is active! Run!");
-            eim.setIntProperty("glpq3", eim.getIntProperty("glpq3") + 1);
+            var activated = eim.incrementIntProperty("glpq3");
             rm.getMap().moveEnvironment("menhir5", 1);
-            if (eim.getIntProperty("glpq3") == 5 && eim.getIntProperty("glpq3_p") == 5) {
+            if (activated == 5 && eim.getIntProperty("glpq3_p") == 5) {
                 eim.dropMessage(6, "The Antellion grants you access to the next portal! Proceed!");
 
                 eim.showClearEffect(mapId, "3pt", 2);

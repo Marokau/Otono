@@ -24,6 +24,8 @@ I am sharing this project so others can enjoy it, learn from the development not
 - **All In One Shop:** `!aioshop` opens an NPC shop with item-name search and categories for weapons, equipment, scrolls, potions, arrows, throwing stars, bullets, and rocks.
 - **Customizable progression:** the example configuration uses 2x base EXP with level-based multipliers intended to ease late-game leveling. Rates and other preferences can be changed in `config.yaml`.
 
+**Class guide status:** Night Lord is the only guide finalized to my satisfaction. Permanent Beginner, Dark Knight, Bowmaster, Ice/Lightning Mage, Hero, Bishop and Corsair are starting guides that I am still auditing and tweaking as I play those classes. Each provides suggested SP targets and level-based gear recommendations.
+
 ## Player-verified bot content
 
 These activities passed my human-led client audits:
@@ -39,6 +41,7 @@ These activities passed my human-led client audits:
 | Magatia AKA Romeo and Juliet PQ | Verified |
 | Sharenian Guild PQ | Human-client verified; companions can be vulnerable to Ergoth attacks. Latest protection changes await a repeat client boss audit |
 | MV's Lair PQ | Human-client verified |
+| Crimsonwood Keep PQ | Human-client verified with seventeen level-140-prepared companions plus the human leader |
 | Zakum | Verified with twelve participants: one human and eleven bots |
 | Horntail | Human-client verified with twelve participants; about 46 minutes for the main body, no observed deaths |
 | Pink Bean | Human-client verified with thirty participants; 59m53s within the native hour, four aggregate participant deaths |

@@ -20,7 +20,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-/** Headless client collision reports for observed Zakum, Horntail, Poison Golem, Ergoth, MV and spike-trap attacks. */
+/** Headless client collision reports for observed Zakum, Horntail, Poison Golem, Ergoth, MV, CWKPQ Masters and spike-trap attacks. */
 public final class BotMobAttackObserver {
     record Attack(int type, Rectangle range, int start, int areaCount, int delay, int pad, boolean deadly, boolean magic) {}
     record Cast(MapleMap map, Monster mob, Attack attack, int index, int mask, Point origin, long due) {}
@@ -46,7 +46,8 @@ public final class BotMobAttackObserver {
         var origin=new Point(p.getShort(),p.getShort());
         var object=bot.getMap().getMapObject(oid);
         if(!(object instanceof Monster mob)||mob.isFake())return;
-        if(!(BotPinkBeanRun.boss(mob.getId()) && BotPinkBeanRun.inInstance(bot))
+        if(!(BotCwkpqAttacks.inInstance(bot))
+                && !(BotPinkBeanRun.boss(mob.getId()) && BotPinkBeanRun.inInstance(bot))
                 && !(mob.getId()>=8800000&&mob.getId()<=8800010)
                 && !(mob.getId()>=8810000&&mob.getId()<=8810009&&(BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot)))
                 && !(mob.getId()>=9300180&&mob.getId()<=9300182&&BotEllinRun.inInstance(bot))
@@ -69,7 +70,7 @@ public final class BotMobAttackObserver {
             var info=root==null?null:root.getChildByPath("attack"+(index+1)+"/info");
             if(info==null)return Optional.empty();
             // Ground-only tremors need their own airborne-avoidance rule, not a blanket area hit.
-            if(DataTool.getInt("jumpAttack",info,0)!=0 && mobId!=9400589 && mobId!=9400748 && mobId!=8810008 && mobId!=8810009)return Optional.empty();
+            if(DataTool.getInt("jumpAttack",info,0)!=0 && mobId!=9400589 && mobId!=9400748 && mobId!=8810008 && mobId!=8810009 && mobId!=9400592)return Optional.empty();
             var range=info.getChildByPath("range");
             if(range==null||range.getChildByPath("lt")==null||range.getChildByPath("rb")==null)return Optional.empty();
             Point lt=DataTool.getPoint("lt",range),rb=DataTool.getPoint("rb",range);
@@ -99,13 +100,13 @@ public final class BotMobAttackObserver {
         BotPoisonMistDamage.tick(entry,bot,System.currentTimeMillis());
         Queue<Cast> queue; synchronized(PENDING){queue=PENDING.get(bot);}
         if(queue==null)return;
-        if(!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)&&!BotGuildCompanions.inInstance(bot)&&!BotMvpqRun.inInstance(bot)&&!(BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))){synchronized(PENDING){PENDING.remove(bot);}return;}
+        if(!BotCwkpqAttacks.inInstance(bot)&&!BotZakumBattle.inInstance(bot)&&!BotEllinRun.inInstance(bot)&&!BotGuildCompanions.inInstance(bot)&&!BotMvpqRun.inInstance(bot)&&!(BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))){synchronized(PENDING){PENDING.remove(bot);}return;}
         long now=System.currentTimeMillis();
         // Different attack delays need not be FIFO ordered.
         for(var cast:queue)if(now>=cast.due&&queue.remove(cast)) {
             if(cast.map!=bot.getMap()||!cast.mob.isAlive()||bot.getHp()<=0||entry.mobHitCooldownMs>0)continue;
             // MV attack one is a ground-only quake (WZ jumpAttack=1).
-            if(((cast.mob.getId()==9400589||cast.mob.getId()==9400748)&&cast.index==0
+            if(((cast.mob.getId()==9400589||cast.mob.getId()==9400748||cast.mob.getId()==9400592)&&cast.index==0
                     ||cast.mob.getId()==8810008||cast.mob.getId()==8810009)&&(entry.inAir||entry.climbing))continue;
             Rectangle bounds=BotCombatManager.getBotTouchBounds(entry,bot);
             if(areas(cast).stream().noneMatch(r->r.intersects(bounds)))continue;

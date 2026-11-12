@@ -1,6 +1,6 @@
 /*
 	This file is part of the OdinMS Maple Story Server
-    Copyright (C) 2008 Patrick Huy <patrick.huy@frz.cc> 
+    Copyright (C) 2008 Patrick Huy <patrick.huy@frz.cc>
                        Matthias Butz <matze@odinms.de>
                        Jan Christian Meyer <vimes@odinms.de>
 
@@ -31,6 +31,8 @@ var player;
 var em;
 const ExpeditionType = Java.type('server.expeditions.ExpeditionType');
 var cwkpq = ExpeditionType.CWKPQ;
+const Crew = Java.type('server.bots.BotCwkpqCrew');
+var botMenu = "\r\n\r\n#k#eBotPQ Menu#n\r\n#b#L20#Assemble a CWKPQ bot crew#l\r\n#L21#Dismiss my CWKPQ bot crew#l";
 var list = "What would you like to do?#b\r\n\r\n#L1#View current Expedition members#l\r\n#L2#Start the fight!#l\r\n#L3#Stop the expedition.#l";
 
 function start() {
@@ -42,6 +44,12 @@ function action(mode, type, selection) {
     player = cm.getPlayer();
     expedition = cm.getExpedition(cwkpq);
     em = cm.getEventManager("CWKPQ");
+
+    if (mode == 1 && (status == 1 || status == 2) && (selection == 20 || selection == 21)) {
+        cm.sendOk(selection == 20 ? Crew.assemble(player) : Crew.release(player));
+        cm.dispose();
+        return;
+    }
 
     if (mode == -1) {
         cm.dispose();
@@ -56,14 +64,14 @@ function action(mode, type, selection) {
                 cm.sendOk("You do not meet the criteria to take attempt Crimsonwood Keep Party Quest!");
                 cm.dispose();
             } else if (expedition == null) { //Start an expedition
-                cm.sendSimple("#e#b<Party Quest: Crimsonwood Keep>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nWould you like to assemble a team to attempt the #rCrimsonwood Keep Party Quest#k?\r\n#b#L1#Lets get this going!#l\r\n\#L2#No, I think I'll wait a bit...#l");
+                cm.sendSimple("#e#b<Party Quest: Crimsonwood Keep>\r\n#k#n" + em.getProperty("party") + "\r\n\r\nWould you like to assemble a team to attempt the #rCrimsonwood Keep Party Quest#k?\r\n#b#L1#Lets get this going!#l\r\n\#L2#No, I think I'll wait a bit...#l" + botMenu);
                 status = 1;
             } else if (expedition.isLeader(player)) { //If you're the leader, manage the exped
                 if (expedition.isInProgress()) {
                     cm.sendOk("Your expedition is already in progress, for those who remain battling lets pray for those brave souls.");
                     cm.dispose();
                 } else {
-                    cm.sendSimple(list);
+                    cm.sendSimple(list + botMenu);
                     status = 2;
                 }
             } else if (expedition.isRegistering()) { //If the expedition is registering
@@ -130,6 +138,11 @@ function action(mode, type, selection) {
                 cm.sendSimple(text);
                 status = 6;
             } else if (selection == 2) {
+                if (!Crew.readyToStart(player, expedition)) {
+                    cm.sendOk("Wait until all seventeen CWKPQ companions have registered.");
+                    cm.dispose();
+                    return;
+                }
                 var min = cwkpq.getMinSize();
                 var size = expedition.getMemberList().size();
                 if (size < min) {
@@ -172,7 +185,7 @@ function action(mode, type, selection) {
                 cm.sendOk("You have banned " + banned.getValue() + " from the expedition.");
                 cm.dispose();
             } else {
-                cm.sendSimple(list);
+                cm.sendSimple(list + botMenu);
                 status = 2;
             }
         }

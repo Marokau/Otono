@@ -23,6 +23,7 @@ public final class BotPqCrewFactory {
             case CLERIC, IL_WIZARD, FP_WIZARD -> Job.MAGICIAN;
             case HUNTER, CROSSBOWMAN -> Job.BOWMAN;
             case ASSASSIN, BANDIT -> Job.THIEF;
+            case BRAWLER, GUNSLINGER -> Job.PIRATE;
             default -> throw new IllegalArgumentException("Choose an explorer second job");
         };
         // Stage one's Black Ratz; boss accuracy is separately verified before boss attempts.
@@ -58,7 +59,7 @@ public final class BotPqCrewFactory {
 
     private static int createPlaceholder(String name, Job job, Job secondJob, int level,
                                          int spawnMap, int referenceMob, int world, int channel) {
-        if (job != Job.WARRIOR && job != Job.MAGICIAN && job != Job.BOWMAN && job != Job.THIEF)
+        if (job != Job.WARRIOR && job != Job.MAGICIAN && job != Job.BOWMAN && job != Job.THIEF && job != Job.PIRATE)
             throw new IllegalArgumentException("Choose an explorer first job");
         var result = BotGenerator.createBotCharacter(world, channel, name);
         if (!result.ok()) throw new IllegalStateException(result.error());
@@ -79,6 +80,7 @@ public final class BotPqCrewFactory {
                 case MAGICIAN -> Job.CLERIC;
                 case BOWMAN -> Job.HUNTER;
                 case THIEF -> Job.ASSASSIN;
+                case PIRATE -> Job.BRAWLER;
                 default -> throw new IllegalArgumentException();
             };
             if (secondJob != null) next = secondJob;

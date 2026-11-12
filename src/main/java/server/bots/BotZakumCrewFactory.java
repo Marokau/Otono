@@ -9,6 +9,10 @@ import tools.DatabaseConnection;
 final class BotZakumCrewFactory {
     private BotZakumCrewFactory() {}
     static int create(String name,Job target,int world,int channel) {
+        return create(name, target, world, channel, 150, BotZakumBattle.RECRUIT);
+    }
+
+    static int create(String name, Job target, int world, int channel, int level, int recruitMap) {
         var second=Job.getById(target.getId()/10*10);
         int id=BotPqCrewFactory.createLpqPlaceholder(name,second,world,channel);
         var client=new BotClient(world,channel);
@@ -19,7 +23,7 @@ final class BotZakumCrewFactory {
             var reference=server.life.LifeFactory.getMonster(8800002);
             if(target==Job.NIGHTLORD)entry.spVariant="claw";
             if(target==Job.HERO)entry.spVariant="2h";
-            while(bot.getLevel()<150) {
+            while(bot.getLevel()<level) {
                 if(bot.getLevel()==70||bot.getLevel()==120){
                     var old=bot.getJob();var next=Job.getById(old.getId()+1);
                     bot.changeJob(next);BotBuildManager.handleJobAdvance(entry,bot,old,next);
@@ -32,7 +36,7 @@ final class BotZakumCrewFactory {
             if(bot.getJob()!=target)throw new IllegalStateException("Wrong fixture job");
             bot.saveCharToDB(true);
             try(var c=DatabaseConnection.getConnection();var s=c.prepareStatement("UPDATE characters SET map=?,spawnpoint=0 WHERE id=?")){
-                s.setInt(1,BotZakumBattle.RECRUIT);s.setInt(2,id);s.executeUpdate();
+                s.setInt(1,recruitMap);s.setInt(2,id);s.executeUpdate();
             }
             return id;
         } catch(java.sql.SQLException failure){throw new IllegalStateException("Could not prepare Zakum fixture",failure);}

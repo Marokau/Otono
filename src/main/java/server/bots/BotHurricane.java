@@ -17,7 +17,10 @@ final class BotHurricane {
     private BotHurricane() {}
 
     static boolean ready(BotEntry entry, Character bot, BotCombatManager.AttackPlan plan, long now) {
-        if (plan.skillId != Bowmaster.HURRICANE || !(BotZakumBattle.inInstance(bot) || BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) {
+        boolean crimsonwood = bot.getEventInstance() != null
+                && (bot.getMapId() == 610030540 || bot.getMapId() == 610030600);
+        if (plan.skillId != Bowmaster.HURRICANE
+                || !(crimsonwood || BotZakumBattle.inInstance(bot) || BotHorntailRun.inInstance(bot) || BotPinkBeanRun.inInstance(bot))) {
             cancel(bot);
             return true;
         }

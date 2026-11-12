@@ -768,6 +768,17 @@ public class EventInstanceManager {
         }
     }
 
+    public int incrementIntProperty(String key) {
+        propertyLock.lock();
+        try {
+            int value = Integer.parseInt(props.getProperty(key)) + 1;
+            props.setProperty(key, Integer.toString(value));
+            return value;
+        } finally {
+            propertyLock.unlock();
+        }
+    }
+
     public Object getObjectProperty(String key) {
         propertyLock.lock();
         try {

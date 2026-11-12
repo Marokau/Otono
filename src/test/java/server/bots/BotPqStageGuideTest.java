@@ -65,4 +65,25 @@ class BotPqStageGuideTest {
    BotPqStageGuide.reset(crew);assertTrue(BotPqStageGuide.tick(ea,ally,human,crew,"cpq-fight",9000));
   }
  }
+
+ @Test void cwkpqScoutDoesNotConsumeTheHumanBriefing() {
+  var human=mock(Character.class);var scout=mock(Character.class);var ally=mock(Character.class);
+  var entry=new BotEntry(scout,human,null);var other=new BotEntry(ally,human,null);
+  Object event=new Object();
+  try(var chat=mockStatic(BotPqChat.class)) {
+   for(int map:new int[]{610030200,610030400,610030500}) {
+    when(scout.getMapId()).thenReturn(map);when(ally.getMapId()).thenReturn(map);
+    when(human.getMapId()).thenReturn(map-100);
+    assertFalse(BotPqStageGuide.tick(entry,scout,human,event,"cwkpq",1000));
+    chat.verify(()->BotPqChat.queue(eq(entry),anyString(),eq(false)),never());
+    when(human.getMapId()).thenReturn(map);
+    assertTrue(BotPqStageGuide.tick(entry,scout,human,event,"cwkpq",1000));
+    assertTrue(BotPqStageGuide.tick(other,ally,human,event,"cwkpq",2000));
+    assertFalse(BotPqStageGuide.tick(entry,scout,human,event,"cwkpq",8000));
+    chat.verify(()->BotPqChat.queue(entry,BotPqStageGuide.text("cwkpq",map),false),times(1));
+    chat.clearInvocations();
+   }
+   assertTrue(BotPqStageGuide.tick(entry,scout,human,new Object(),"cwkpq",10000));
+  }
+ }
 }

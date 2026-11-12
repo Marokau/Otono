@@ -17,6 +17,22 @@ import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 class BotLootEligibilityTest {
+    @Test void cwkBonusLeavesItemsMesosAndPlayerRedropsForTheHuman() {
+        var bot = mock(Character.class);
+        var drop = mock(MapItem.class);
+        var entry = new BotEntry(bot, mock(Character.class), null);
+        when(bot.getMapId()).thenReturn(610030800);
+        when(bot.getEventInstance()).thenReturn(mock(scripting.event.EventInstanceManager.class));
+        when(drop.canBePickedBy(bot)).thenReturn(true);
+        when(drop.getItemId()).thenReturn(1122059);
+        assertFalse(BotLootEligibility.canBotLoot(entry, bot, drop));
+        when(drop.getItemId()).thenReturn(0);
+        when(drop.getMeso()).thenReturn(1000);
+        assertFalse(BotLootEligibility.canBotLoot(entry, bot, drop));
+        when(drop.isPlayerDrop()).thenReturn(true);
+        assertFalse(BotLootEligibility.canBotLoot(entry, bot, drop));
+    }
+
     @Test
     void shouldDelayTargetingBotInventoryDropsForFifteenSeconds() {
         MapleMap map = mock(MapleMap.class);

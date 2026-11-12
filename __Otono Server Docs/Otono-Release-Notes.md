@@ -1,5 +1,32 @@
 # Otono release notes
 
+## v1.3 - CWKPQ bot crew and class guides
+
+Release title: `v1.3 - CWKPQ bot crew and class guides`
+
+### CWKPQ bot crew
+
+- Assemble seventeen dedicated level-140-prepared companions through Jack's **BotPQ Menu**, for an eighteen-participant expedition including you.
+- The mixed-class crew handles the native sigils, traversal, five class weapons, Twisted Masters and bonus-room boxes. Your normal entry requirements and leader interactions remain in place.
+- Added stage explanations, clearer Battle Statue directions, Ilbi restocking, appropriate combat skills, and client-observed boss damage/status handling.
+- Original Council Hall boss drops stay available until collected or the instance closes. Companions leave boss loot and every bonus-room drop, including mesos, for you.
+- **Human-client verified:** I completed the CWKPQ audit and defeated the bosses. Earlier bot-only testing also completed the route through bonus rewards and normal cleanup.
+
+### WhereLevel class guides
+
+- The class menu now includes **Permanent Beginner, Night Lord, Dark Knight, Bowmaster, Ice/Lightning Mage, Hero, Bishop and Corsair**. Earlier jobs are included, such as Cleric and Priest under Bishop.
+- Added suggested level-by-level SP allocations, current-point comparisons, level-based gear progression and practical class notes, using Togain's supplied transcripts and relevant references checked against Otono's v83 data.
+- Permanent Beginner appears first. Gear for each level range is displayed on one scrollable page.
+- **Guide status:** Night Lord is the only guide finalized to my satisfaction. All other class guides are still being audited and tweaked as I play those classes. They provide a starting point and may change.
+
+### Verification and updating
+
+CWKPQ passed my human-client boss audit. Focused automated checks cover the crew's combat, hazards, loot rules and shared behavior, along with the class-guide menus, skill prerequisites and SP budgets. This is not a claim that every class build or possible raid edge case has been human-tested.
+
+Existing Git users can pull the update, rebuild with Maven and restart using their normal launcher. Keep your own configuration and database. No client patch is required for the guide menus.
+
+Implementation details and audit history are in the [content catalog](Otono-PQ-catalog.md), [development journal](Otono-PQ-dev-Journal.md), [CWKPQ knowledge base](kb%20Otono%20Bots/kb_bot_cwkpq.md) and [WhereLevel guide notes](Otono-wherelevel%20NPC.md).
+
 ## Horntail and Pink Bean PQ bot crews added and verified - October 31, 2026
 
 Release title: `Horntail and Pink Bean PQ bot crews added and verified`

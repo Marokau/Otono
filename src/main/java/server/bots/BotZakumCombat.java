@@ -32,6 +32,7 @@ final class BotZakumCombat {
         }
         var mobs=new ArrayList<Monster>();
         for(var mob:bot.getMap().getAllMonsters())if(mob.isAlive()&&!mob.isFake()&&canDamage(bot,mob))mobs.add(mob);
+        selectCrimsonwoodTargets(bot, mobs);
         // Commit to the first living arm, rather than firing at a later arm just because it is closer.
         int firstArm=0,firstRank=Integer.MAX_VALUE;
         for(var mob:bot.getMap().getAllMonsters())if(mob.isAlive()&&!mob.isFake()&&mob.getId()>=8800003&&mob.getId()<=8800010) {
@@ -119,6 +120,23 @@ final class BotZakumCombat {
         entry.moveDir=0;entry.ropeEntryPending=false;entry.downJumpPending=false;
         BotMovementManager.tickGrounded(entry,null);return true;
     }
+    static void selectCrimsonwoodTargets(Character bot, List<Monster> mobs) {
+        if (bot.getEventInstance() == null || bot.getMapId() != 610030600) return;
+        boolean hsalf = false;
+        boolean otherMaster = false;
+        for (var mob : mobs) {
+            if (mob.getId() == 9400593) hsalf = true;
+            if (mob.getId() >= 9400590 && mob.getId() <= 9400592) otherMaster = true;
+        }
+        boolean damageMage = bot.getJob() == client.Job.FP_ARCHMAGE || bot.getJob() == client.Job.IL_ARCHMAGE;
+        for (var iterator = mobs.iterator(); iterator.hasNext();) {
+            int id = iterator.next().getId();
+            if (damageMage && hsalf && id != 9400593
+                    || !BotEquipManager.isMageJob(bot.getJob()) && otherMaster && id == 9400593)
+                iterator.remove();
+        }
+    }
+
     static boolean canDamage(Character bot,Monster mob) {
         return !mob.isBuffed(BotEquipManager.isMageJob(bot.getJob())?MonsterStatus.MAGIC_IMMUNITY:MonsterStatus.WEAPON_IMMUNITY);
     }

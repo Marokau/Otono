@@ -9,22 +9,23 @@ import tools.DatabaseConnection;
 final class BotPqCompanionPool {
     private BotPqCompanionPool() {}
     static int acquire(Character leader, String pq, Job job, String prefix, int recruitMap) {
-        if (!pq.equals("pinkbean") && !pq.equals("horntail") && !pq.equals("mvpq") && !pq.equals("gpq") && !pq.equals("opq") && !pq.equals("lmpq") && !pq.equals("zakum") && !pq.equals("mpq") && !pq.equals("cpq") && !pq.equals("cpq2") && !pq.equals("epq")) throw new IllegalArgumentException(pq);
-        String levels = pq.equals("pinkbean") ? "180 AND 255" : pq.equals("horntail") ? "150 AND 255" : pq.equals("mvpq") ? "140 AND 255" : pq.equals("gpq") ? (job == Job.BOWMAN ? "20 AND 30" : "100 AND 120") : pq.equals("epq") ? "44 AND 55" : pq.equals("cpq") ? "30 AND 50" : pq.equals("zakum") ? "150 AND 200" : pq.equals("mpq") ? "71 AND 85" : "51 AND 70";
-        String savedMaps = pq.equals("pinkbean") ? "(c.map=? OR c.map=270000000 OR c.map BETWEEN 270050000 AND 270050300)" : pq.equals("horntail") ? "(c.map=? OR c.map=240000000 OR c.map BETWEEN 240050000 AND 240060200)" : pq.equals("mvpq") ? "(c.map=? OR c.map IN (674030000,674030200,674030300))" : pq.equals("gpq") ? "(c.map=? OR c.map=200000301 OR c.map BETWEEN 990000000 AND 990001101)" : pq.equals("zakum") ? "(c.map=? OR c.map BETWEEN 211041900 AND 211042400)"
+        if (!pq.equals("cwkpq") && !pq.equals("pinkbean") && !pq.equals("horntail") && !pq.equals("mvpq") && !pq.equals("gpq") && !pq.equals("opq") && !pq.equals("lmpq") && !pq.equals("zakum") && !pq.equals("mpq") && !pq.equals("cpq") && !pq.equals("cpq2") && !pq.equals("epq")) throw new IllegalArgumentException(pq);
+        String levels = pq.equals("cwkpq") ? "115 AND 255" : pq.equals("pinkbean") ? "180 AND 255" : pq.equals("horntail") ? "150 AND 255" : pq.equals("mvpq") ? "140 AND 255" : pq.equals("gpq") ? (job == Job.BOWMAN ? "20 AND 30" : "100 AND 120") : pq.equals("epq") ? "44 AND 55" : pq.equals("cpq") ? "30 AND 50" : pq.equals("zakum") ? "150 AND 200" : pq.equals("mpq") ? "71 AND 85" : "51 AND 70";
+        String savedMaps = pq.equals("cwkpq") ? "(c.map=? OR c.map BETWEEN 610030100 AND 610030800)" : pq.equals("pinkbean") ? "(c.map=? OR c.map=270000000 OR c.map BETWEEN 270050000 AND 270050300)" : pq.equals("horntail") ? "(c.map=? OR c.map=240000000 OR c.map BETWEEN 240050000 AND 240060200)" : pq.equals("mvpq") ? "(c.map=? OR c.map IN (674030000,674030200,674030300))" : pq.equals("gpq") ? "(c.map=? OR c.map=200000301 OR c.map BETWEEN 990000000 AND 990001101)" : pq.equals("zakum") ? "(c.map=? OR c.map BETWEEN 211041900 AND 211042400)"
                 : pq.equals("cpq") ? "(c.map=? OR c.map=980000010)"
                 : pq.equals("cpq2") ? "(c.map=? OR c.map=980030010)"
                 : pq.equals("epq") ? "(c.map=? OR c.map=930000800)" : "c.map=?";
         try (var connection = DatabaseConnection.getConnection()) {
             try (var query = connection.prepareStatement("SELECT c.id FROM bot_pq_companion p "
                     + "JOIN characters c ON c.id=p.bot_char_id JOIN accounts a ON a.id=c.accountid "
-                    + "WHERE p.pq=? AND c.world=? AND c.level BETWEEN " + levels + " AND c.job=? "
+                    + "WHERE p.pq=? AND c.world=? AND c.level BETWEEN " + levels + " AND (c.job=? OR (p.pq='cwkpq' AND c.job=?)) "
                     + "AND " + savedMaps + " AND c.gm=0 AND a.loggedin=0 AND c.name LIKE ? "
                     + "AND NOT EXISTS (SELECT 1 FROM managed_bot m WHERE m.bot_char_id=c.id) "
                     + "AND NOT EXISTS (SELECT 1 FROM bot_owners o WHERE o.bot_char_id=c.id) "
                     + "ORDER BY CHAR_LENGTH(c.name),c.name")) {
                 query.setString(1, pq); query.setInt(2, leader.getWorld()); query.setInt(3, job.getId());
-                query.setInt(4, recruitMap); query.setString(5, prefix + "%");
+                query.setInt(4, pq.equals("cwkpq") ? job.getId() - 1 : job.getId());
+                query.setInt(5, recruitMap); query.setString(6, prefix + "%");
                 try (var rows = query.executeQuery()) {
                     while (rows.next()) {
                         int id = rows.getInt(1);
@@ -35,8 +36,9 @@ final class BotPqCompanionPool {
             }
             int suffix = 1;
             while (Character.getIdByName(prefix + suffix) >= 0) suffix++;
-            if (pq.equals("pinkbean") || pq.equals("horntail") || pq.equals("mvpq") || pq.equals("zakum") || pq.equals("gpq")) {
-                int id = pq.equals("pinkbean") ? BotPinkBeanCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("horntail") ? BotHorntailCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("mvpq") ? BotMvpqCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("gpq") ? BotPqCrewFactory.createGuildPlaceholder(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel())
+            if (pq.equals("cwkpq") || pq.equals("pinkbean") || pq.equals("horntail") || pq.equals("mvpq") || pq.equals("zakum") || pq.equals("gpq")) {
+                int id = pq.equals("cwkpq") ? BotZakumCrewFactory.create(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel(), BotCwkpqCrew.CREW_LEVEL, recruitMap)
+                        : pq.equals("pinkbean") ? BotPinkBeanCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("horntail") ? BotHorntailCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("mvpq") ? BotMvpqCompanions.createFixture(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel()) : pq.equals("gpq") ? BotPqCrewFactory.createGuildPlaceholder(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel())
                         : BotZakumCrewFactory.create(prefix + suffix, job, leader.getWorld(), leader.getClient().getChannel());
                 try (var insert = connection.prepareStatement("INSERT INTO bot_pq_companion (bot_char_id,pq) VALUES (?,?)")) {
                     insert.setInt(1, id); insert.setString(2, pq); insert.executeUpdate();

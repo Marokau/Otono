@@ -382,8 +382,8 @@ BOTH PARTS. The JUMP/FJ landing guard and `lastRegionId` chain continuity are co
 load-bearing (shared ground is real; the phantom-jump class persists). `lastRegionId` also now
 feeds `moverZMassFor` — the airborne wall scope reuses the chain-continuity region.
 
-Client-truth audit notes (v95 PDB `external v95 PDB toolkit`,
-struct dump tool `pdb_types.py`):
+Client-truth audit notes (v95 PDB `D:\ReverseEngineer\MapleStoryV95-PDB-IncludeDllAndOther`,
+struct dump tool `D:\ReverseEngineer\pdb_types.py`):
 - `CStaticFoothold`: +0x2c `m_lPage` (WZ layer), +0x30 `m_lZMass` (WZ group), +0x40 `m_uvx`,
   +0x50 `m_len`, +0x64/+0x68 prev/next. `CWvsPhysicalSpace2D`: +0x40 `m_nBaseZMass` = smallest
   group value in the map (computed in `Load` @v83 0xa44c7c).

@@ -161,3 +161,5 @@ Do not copy a graph version from a KB note. The current value and full schema hi
 - [`kb_bot_pq_boss_loot.md`](kb_bot_pq_boss_loot.md): human-first boss loot, deliberate redrops and stage-item exceptions.
 
 - [`kb_bot_raid_equipment.md`](kb_bot_raid_equipment.md): native raid gear goals, Gelt/Apple supplies, secondary AP readiness and saved external class-build references.
+
+- [Crimsonwood Keep PQ companions](kb_bot_cwkpq.md) covers the level-140 roster, ordinary scrolling, class roles, full native route and verified headless clear.

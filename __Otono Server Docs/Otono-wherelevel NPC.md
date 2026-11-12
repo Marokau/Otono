@@ -1,5 +1,43 @@
 # In-game training and build guide
 
+## Class guides - current implementation
+
+**Audit status:** Night Lord is the only class guide finalized to my satisfaction. All other guides are still being audited and tweaked as I play their classes; they are starting references.
+
+Class Guides lists **Permanent Beginner first**, followed by **Night Lord, Dark Knight, Bowmaster, Ice/Lightning Mage, Hero, Bishop and Corsair**. The Bishop path includes Magician, Cleric and Priest; the other advanced classes likewise include their earlier jobs.
+
+Each uses the established SP/gear layout: choose a job stage or level, see that level's additions and cumulative targets, and compare with your character's current points when its class matches. Gear opens at your level range with all slots on one scrollable page and a range selector. Changing classes resets the stage and gear range. The menu does not assign SP/AP or grant items; skill unlocks and mastery books still apply.
+
+| Path | Suggested SP route and useful notes | Gear coverage |
+| --- | --- | --- |
+| Night Lord | Existing saved build retained; Shadow Partner supplies noted. | Existing eight saved gear ranges retained; added LUK/DEX and attack-accessory context. |
+| Permanent Beginner | Six ordinary SP at levels 2-7; Nimble Feet/Three Snails route, Recovery as an alternative. | Beginner-only weapons, STR requirements, all-class armor, accuracy accessories, shields and boss-survival limits. |
+| Dark Knight | Early HP Increase, hybrid spear/pole arm, no Final Attack, Crusher/Fury and Berserk potion management. | Accuracy-to-STR progression, Maple weapons, Sky Ski, Purple Surfboard and attack accessories. |
+| Bowmaster | No Final Attack, Arrow Rain training route, then Sharp Eyes/Bow Expert/Hurricane. | Maple bows to Nisrock/Dragon Shiner, STR budgeting, arrows and optional Timeless Engaw. |
+| Ice/Lightning Mage | Early MP Increase/Magic Guard, Thunder Bolt mobbing, Ice Strike/Amplification/Booster, mixed Blizzard/Chain Lightning progression. | No-LUK Maple staffs/wands, Elemental Wands 3/7, INT/magic-attack shields, gloves, capes and accessories. |
+| Hero | Sword route, no Final Attack, Combo Attack and finishers, then Brandish/Advanced Combo. | Early swords through Stonetooth/Dragon Claymore/Timeless, one-handed/shield tradeoffs, STR/accuracy and attack accessories. |
+| Bishop | Heal-first Cleric, Holy Symbol-first Priest, then a mixed Genesis/support route. | Cleric/Priest/Bishop weapons, INT/LUK tradeoffs, Maple Shield, magic-attack accessories and pendant comparisons. |
+| Corsair | Gun-pirate route, Mastery/mobility, Outlaw prerequisites, Battleship Cannon/Bullseye and dismounted Rapid Fire. | Maple guns to Peacemaker/Concerto/Dragonfire/Timeless, level-gated bullets, STR/DEX overall choices and attack accessories. |
+
+### Sources and scope
+
+All eight supplied Togain transcript files were reviewed for relevant skill, gear and mechanic guidance: `Night Lord.txt`, `Permanent Beginner.txt`, `Dark Knight.txt`, `BowMaster.txt`, `Ice Lightning Mage.txt`, `Hero.txt`, `Bishop.txt` and `Corsair.txt`. These are source references, not files needed by the running NPC.
+
+The added allocations are **suggested Otono routes**, not purported verbatim level-by-level builds from video visuals. Optional skills and fourth-job priorities can change with training style, available books and budget. Saved Night Lord targets remain as previously supplied. Later-era features and Royals-specific class changes are not imported. Equipment existence and the stated level/stat requirements were checked against the installed handbook/WZ data; this does not guarantee an item's availability from a particular drop, quest or shop.
+
+Local details checked include the six-point Beginner limit, Magician's level-8 start, skill caps/prerequisites, 50% maximum-level Berserk threshold, Beginner-only weapon STR requirements, Elemental Wand levels/LUK, Stonetooth's DEX requirement and gun/bullet progression. Historical elemental-wand advice for Bishops is phrased as a comparison rather than an unconditional best-in-slot claim. The Corsair route uses verified local combat skills and does not rely on the inherited anomalous label for skill 5221010.
+
+Supplementary references:
+
+- [Nany's Bowmaster guide](https://royals.ms/forum/threads/new-source-nanys-bowmaster-guide-road-to-lord-sniper.121936/)
+- [Donn1e's Dark Knight guide](https://royals.ms/forum/threads/a-guide-to-dark-knight-2026.230387/)
+- The supplied archived MapleAnime page was unavailable during the initial update; its contents have not been used as verified guidance.
+
+### Verification
+
+Seven focused tests passed using the real GraalJS NPC script. They cover all eight class menus, complete scrollable gear ranges and back links, job-stage/current-point comparisons (including Cleric and Priest), and every new build level against local WZ skill caps, prerequisites and exact SP budgets. Existing PQ and expedition menu tests also pass. A human client review of the expanded class-guide pages remains pending. Close and reopen the dialogue to load menu changes; no server restart, gameplay Java change or client patch is required.
+
+
 Type `@wherelevel` to open the guide in an NPC dialogue. No client patch is needed.
 The Java command must already be installed; the menu is `scripts/npc/wherelevel.js`.
 Menu-only changes load when a fresh dialogue opens; they do not require a rebuild.
@@ -38,8 +76,8 @@ Menu-only changes load when a fresh dialogue opens; they do not require a rebuil
 - **Class Guides → Night Lord → Skill points (SP)** opens at the character's job stage and level. Browse stages or
   levels to compare build targets against current points. Targets assume on-time
   advancement and the earlier stages of the displayed build; no points are spent.
-- **Class Guides → Night Lord → Gear** opens at the character's level range, with six slots
-  per page and a level-range selector. All eight supplied gear tables (10–200+)
+- **Class Guides → Night Lord → Gear** opens at the character's level range, with all slots
+  on one scrollable page and a level-range selector. All eight supplied gear tables (10–200+)
   are preserved as reference targets, including scrolled stats and Royals-specific
   items; availability and equipment requirements are not locally verified. This
   page does not compare equipped items. Empty source slots say “No recommendation

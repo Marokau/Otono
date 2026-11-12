@@ -12,7 +12,10 @@ final class BotZakumBooks {
     private BotZakumBooks() {}
     static void prepare(Character bot) {
         var entry=BotManager.getInstance().getEntryByBotCharId(bot.getId());
-        if(entry==null||bot.getEventInstance()!=null)throw new IllegalArgumentException("Prepare books before entering");
+        // Mastery books are usable during events through the same native handler.
+        // Only explicitly prepared headless companions may receive this assistance.
+        if(entry==null || !(bot.getClient() instanceof client.BotClient))
+            throw new IllegalArgumentException("Prepare books only for a managed bot");
         if(!BotHorntailRaidBuild.VARIANT.equals(entry.spVariant)) {
             if(bot.getJob()==Job.HERO)entry.spVariant="2h";
             if(bot.getJob()==Job.BISHOP)entry.spVariant="boss-support";

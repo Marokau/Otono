@@ -11,6 +11,32 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class BotPqDropPolicyTest {
+    @Test void cwkOriginalBossLootSurvivesClearButRedropsAndOtherMapsUseNormalExpiry() {
+        var map = mock(MapleMap.class);
+        var drop = mock(MapItem.class);
+        var event = mock(EventInstanceManager.class);
+        var boss = mock(server.life.Monster.class);
+        when(map.getId()).thenReturn(610030600);
+        when(map.getEventInstance()).thenReturn(event);
+        when(drop.getItemId()).thenReturn(1122059);
+        when(drop.getDropper()).thenReturn(boss);
+        when(boss.isBoss()).thenReturn(true);
+        assertTrue(BotPqDropPolicy.keepsForHandoff(map, drop));
+        when(event.isEventCleared()).thenReturn(true);
+        assertTrue(BotPqDropPolicy.keepsForHandoff(map, drop));
+        when(drop.isPlayerDrop()).thenReturn(true);
+        assertFalse(BotPqDropPolicy.keepsForHandoff(map, drop));
+        when(drop.isPlayerDrop()).thenReturn(false);
+        when(boss.isBoss()).thenReturn(false);
+        assertFalse(BotPqDropPolicy.keepsForHandoff(map, drop));
+        when(boss.isBoss()).thenReturn(true);
+        when(map.getEventInstance()).thenReturn(null);
+        assertFalse(BotPqDropPolicy.keepsForHandoff(map, drop));
+        when(map.getEventInstance()).thenReturn(event);
+        when(map.getId()).thenReturn(610030700);
+        assertFalse(BotPqDropPolicy.keepsForHandoff(map, drop));
+    }
+
     @Test void ellinMarbleAndStoneHandoffsStayOnlyWithTheirActiveHumanCrew() {
         var map=mock(MapleMap.class);var drop=mock(MapItem.class);var bot=mock(Character.class);var human=mock(Character.class);
         var manager=mock(BotManager.class);var entry=new BotEntry(bot,human,null);

@@ -30,6 +30,9 @@ public final class BotLootEligibility {
             return false;
         }
 
+        // CWKPQ companions open bonus chests; every drop belongs to the player.
+        if (bot.getMapId() == 610030800 && bot.getEventInstance() != null) return false;
+
         if (BotPinkBeanRun.inInstance(bot) && BotPinkBeanRun.crew(bot)!=null) {
             // The invisible native stage item belongs to the reactor, never a loot scan.
             if (drop.getItemId()==4001193 || !drop.isPlayerDrop()) return false;

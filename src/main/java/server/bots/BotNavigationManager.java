@@ -1618,7 +1618,13 @@ final class BotNavigationManager {
         if (!hasTeleport(bot) && !hasFlashJump(bot)) {
             return false;
         }
-        if (!BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot) && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot) && !BotMagatiaRun.inInstance(bot) && !BotGuildCompanions.inInstance(bot) && !(BotMvpqRun.inInstance(bot) || BotHorntailRun.inInstance(bot)) && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
+        boolean crimsonwood = bot.getEventInstance() != null
+                && bot.getMapId() >= 610030100 && bot.getMapId() <= 610030800;
+        if (!crimsonwood && !BotLpqRun.inInstance(bot) && !BotOpqRun.inInstance(bot)
+                && !BotLmpqRun.inInstance(bot) && !BotEllinRun.inInstance(bot)
+                && !BotMagatiaRun.inInstance(bot) && !BotGuildCompanions.inInstance(bot)
+                && !BotMvpqRun.inInstance(bot) && !BotHorntailRun.inInstance(bot)
+                && bot.getMeso() <= MOVEMENT_SKILL_MIN_MESO) {
             return false;
         }
         int maxMp = bot.getMaxMp();

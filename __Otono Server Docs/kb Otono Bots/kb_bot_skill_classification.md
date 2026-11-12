@@ -40,3 +40,14 @@ magic target calculation with its WZ mastery and MAD. Pre-BB summon cadence is
 Offset monster bounds, rather than a shared monster origin, anchor Phoenix splash.
 Live casting and repeated post-correction Phoenix/Bahamut damage were verified with the human client connected. A full fight is still required for long-run stability.
 **Export/debug tool:** `src/test/java/server/bots/BotSkillClassificationExportTest.java`. Run `mvn test -Dtest=BotSkillClassificationExportTest`. Loads `SkillFactory.loadAllSkills()` + WZ String.img descriptions, scans `wz/Skill.wz/*.img.xml` for skill IDs (regex `<imgdir name="(\d{4,})">`), classifies each via the real predicates, writes `tmp/bot-skill-classification.{tsv,md}`. Excluded buckets are sub-labelled data-drivenly (no id lists): **MOB_DEBUFF** (duration, no statup), **CHARGED_ATTACK** (declares damage/matk, no duration — Big Bang/Energy Drain/Magic+Power Crash), **INSTANT_UTILITY** (one-shot — Dispel/Resurrection/MP Recovery/Time Leap/Teleport/Armor Crash). md report includes a desc column to eyeball each verdict. Always passes; it's a visual-debug dump, not a regression gate. Mock note: `BotCombatManagerTest.skillWithBuffAction` must stub `getDuration()>0` AND a non-empty `getStatups()` or the gates drop it. See [[kb_bot_cleric_heal_architecture]].
+
+
+## Pirate runtime prerequisites confirmed in CWKPQ (November 12, 2026)
+
+A learned skill and affordable MP/HP cost do not establish client eligibility.
+BotCombatManager.canUseSkill also checks active Super Transformation for
+Demolition/Snatch, an active pirate transformation for Shockwave, and a
+native energy meter of at least 10,000 for Energy Blast/Drain/Orb. Planning,
+better-reach movement estimates and final dispatch use the same check.
+BotPirateAttackStateTest covers absent/present forms, charge thresholds and
+ordinary attacks retaining their normal resource costs.
